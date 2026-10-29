@@ -23,14 +23,16 @@ const providers = {
     const j = await postJson('https://api.anthropic.com/v1/messages',
       { 'x-api-key': key, 'anthropic-version': '2023-06-01' },
       { model, max_tokens: MAX_TOKENS, system, messages: [{ role: 'user', content: prompt }] }, signal);
-    return (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join('');
+    const u = j.usage || {};
+    return { text: (j.content || []).filter((c) => c.type === 'text').map((c) => c.text).join(''), inTok: u.input_tokens || 0, outTok: u.output_tokens || 0 };
   },
 
   async openai({ key, model, system, prompt, signal, baseUrl = 'https://api.openai.com/v1' }) {
     const j = await postJson(`${baseUrl}/chat/completions`,
       { authorization: `Bearer ${key}` },
       { model, messages: [{ role: 'system', content: system }, { role: 'user', content: prompt }] }, signal);
-    return (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '';
+    const u = j.usage || {};
+    return { text: (j.choices && j.choices[0] && j.choices[0].message && j.choices[0].message.content) || '', inTok: u.prompt_tokens || 0, outTok: u.completion_tokens || 0 };
   },
 
   // xAI 的 API 與 OpenAI Chat Completions 格式相容
@@ -45,11 +47,12 @@ const providers = {
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
     }, signal);
     const parts = (j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts) || [];
-    return parts.map((p) => p.text || '').join('');
+    const u = j.usageMetadata || {};
+    return { text: parts.map((p) => p.text || '').join(''), inTok: u.promptTokenCount || 0, outTok: u.candidatesTokenCount || 0 };
   },
 };
 
-async function runApi({ api, agent, prompt, key, signal, onChunk }) {
+async function runApi({ api, agent, prompt, key, signal, onChunk, onUsage }) {
   if (!api) throw new Error(`${agent.engine} 沒有 API 接法`);
   const fn = providers[api.provider];
   if (!fn) throw new Error(`不支援的 API 供應商：${api.provider}`);
@@ -57,9 +60,10 @@ async function runApi({ api, agent, prompt, key, signal, onChunk }) {
   const model = (agent.model || '').trim() || api.defaultModel;
   if (!model) throw new Error(`${agent.name} 未指定模型，請在角色設定填入 ${api.provider} 的模型 ID`);
   const system = `你的名字是 ${agent.name}，職稱是「${agent.title}」。\n${agent.systemPrompt || ''}`;
-  const text = await fn({ key, model, system, prompt, signal });
-  if (onChunk) onChunk(text);
-  return text;
+  const r = await fn({ key, model, system, prompt, signal });
+  if (onUsage) onUsage({ inTok: r.inTok, outTok: r.outTok, model });
+  if (onChunk) onChunk(r.text);
+  return r.text;
 }
 
 module.exports = { runApi, providers };

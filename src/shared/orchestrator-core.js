@@ -79,7 +79,7 @@
       for (let i = 0; i < wf.steps.length; i++) {
         const step = wf.steps[i];
         const agent = agentById(step.agent);
-        ev.emit('run', { status: 'step', runId, workflowId: wf.id, label: `${agent.name}：${step.label}`, index: i + 1, total: wf.steps.length });
+        ev.emit('run', { status: 'step', runId, workflowId: wf.id, label: `${agent.name}：${step.label}`, index: i + 1, total: wf.steps.length, agentId: agent.id, stepIndex: i });
         if (prevAgentId && prevAgentId !== agent.id) {
           ev.emit('handoff', { from: prevAgentId, to: agent.id, label: step.label });
         }
@@ -107,13 +107,13 @@
       for (let r = 1; r <= rounds; r++) {
         for (const p of people) {
           n++;
-          ev.emit('run', { status: 'step', runId, workflowId: wf.id, label: `第 ${r} 輪：${p.name} 發言`, index: n, total });
+          ev.emit('run', { status: 'step', runId, workflowId: wf.id, label: `第 ${r} 輪：${p.name} 發言`, index: n, total, agentId: p.id, round: r });
           const out = await callAgent(p, fill(wf.turnPrompt, { task, transcript: transcript(), round: r }), ctrl, 'thinking');
           lines.push(`【${p.name}／${p.title}】${out}`);
           ev.emit('say', { id: p.id, text: snippet(out, 60) });
         }
       }
-      ev.emit('run', { status: 'step', runId, workflowId: wf.id, label: `${moderator.name} 整理結論`, index: total, total });
+      ev.emit('run', { status: 'step', runId, workflowId: wf.id, label: `${moderator.name} 整理結論`, index: total, total, agentId: moderator.id, summary: true });
       const summary = await callAgent(moderator, fill(wf.summaryPrompt, { task, transcript: transcript() }), ctrl, 'thinking');
       ev.emit('say', { id: moderator.id, text: '結論整理好了！' });
       return { outputs: lines.concat([`【結論】${summary}`]), final: summary, transcript: transcript() };
@@ -135,7 +135,7 @@
       const runId = new Date().toISOString().replace(/[:.]/g, '-');
       const controller = new AbortController();
       current = { runId, controller };
-      ev.emit('run', { status: 'started', runId, workflowId: wf.id, label: wf.name });
+      ev.emit('run', { status: 'started', runId, workflowId: wf.id, label: wf.name, task: String(task) });
       ev.emit('log', { agentId: null, kind: 'system', text: `開始「${wf.name}」：${task}` });
       try {
         const result = wf.type === 'meeting'

@@ -21,11 +21,18 @@
     try { return await fn(); } catch (e) { toast(e.message || String(e), true); return null; }
   }
 
-  const office = new window.Office($('#office'), state, { onSelect: (id) => { if (id) { switchTab('agents'); openAgent(id); } } });
+  const office = new window.Office($('#office'), state, {
+    onSelect: (id) => { if (id) { switchTab('agents'); openAgent(id); } },
+    onBoard: (kind, id) => (kind === 'overview' ? openOverview() : openRoomBoard(id)),
+  });
+  let tasks = state.tasks || { projects: [], tasks: [] };
+  let usage = {};
+  office.setTasks(tasks);
 
   function setState(next) {
     state = next;
     office.setState(state);
+    if (next.tasks) { tasks = next.tasks; office.setTasks(tasks); }
     renderAll();
   }
 
@@ -320,6 +327,8 @@
   api.onEvent((type, d) => {
     office.onEvent(type, d);
     if (type === 'update') showUpdate(d);
+    if (type === 'tasks') { tasks = d; office.setTasks(tasks); refreshModal(); }
+    if (type === 'usage' && d) { usage[d.engine] = d; office.setUsage(usage); renderUsage(); }
     if (type === 'log') {
       if (d.kind === 'chunk') {
         let el = streamEl[d.agentId];
@@ -398,6 +407,226 @@
   $('#applyUpdate').addEventListener('click', applyUpdate);
   $('#checkUpdate').addEventListener('click', () => checkUpdate(true));
 
+  // ================= 白板（各處室）與專案總覽（會議室） =================
+  const STATUS = { todo: '待辦', doing: '進行中', blocked: '卡住', done: '完成' };
+  const roomsFlat = () => state.rooms.floors.flat();
+  const roomLabel = (id) => (roomsFlat().find((r) => r.id === id) || { name: id }).name;
+  const projectOf = (id) => tasks.projects.find((p) => p.id === id);
+  const taskPct = (t) => (t.status === 'done' ? 100 : t.progress || 0);
+  const projPct = (pid) => {
+    const ts = tasks.tasks.filter((t) => t.projectId === pid);
+    return ts.length ? Math.round(ts.reduce((s, t) => s + taskPct(t), 0) / ts.length) : 0;
+  };
+  let modalView = null; // { kind: 'room', id } | { kind: 'overview' }
+  let editingTask = null;
+
+  function openModal(title, sub) {
+    $('#modalTitle').textContent = title;
+    $('#modalSub').textContent = sub || '';
+    $('#modal').hidden = false;
+  }
+  function closeModal() { $('#modal').hidden = true; modalView = null; editingTask = null; }
+  $('#modalClose').addEventListener('click', closeModal);
+  $('#modal').addEventListener('click', (e) => { if (e.target.id === 'modal') closeModal(); });
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape' && !$('#modal').hidden) closeModal(); });
+  function refreshModal() {
+    if (!modalView || $('#modal').hidden) return;
+    // 正在輸入時不要重畫，避免打字被打斷
+    const a = document.activeElement;
+    if (a && $('#modalBody').contains(a) && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return;
+    if (modalView.kind === 'room') renderRoomBoard(modalView.id); else renderOverview();
+  }
+
+  function taskCard(t, showRoom) {
+    const p = projectOf(t.projectId);
+    const a = state.agents.find((x) => x.id === t.agentId);
+    const meta = [p ? p.title : '', a ? a.name : '未指派', showRoom ? roomLabel(t.room) : ''].filter(Boolean).join('・');
+    const editing = editingTask === t.id;
+    return `<div class="kcard" data-task="${esc(t.id)}">
+      <div class="t">${esc(t.title)}</div>
+      <div class="m">${esc(meta)}</div>
+      <div class="pbar ${t.status === 'blocked' ? 'blocked' : ''}"><i style="width:${taskPct(t)}%"></i></div>
+      ${t.note ? `<div class="n">${esc(t.note)}</div>` : ''}
+      ${editing ? `<div class="kedit" data-edit="${esc(t.id)}">
+        <div class="row"><select data-f="status">${Object.entries(STATUS).map(([k, v]) => `<option value="${k}"${k === t.status ? ' selected' : ''}>${v}</option>`).join('')}</select>
+        <select data-f="agentId"><option value="">未指派</option>${state.agents.map((x) => `<option value="${esc(x.id)}"${x.id === t.agentId ? ' selected' : ''}>${esc(x.name)}（${esc(roomLabel(x.room))}）</option>`).join('')}</select></div>
+        <div class="row"><input type="range" min="0" max="100" step="10" value="${taskPct(t)}" data-f="progress" /><span class="hint">${taskPct(t)}%</span></div>
+        <input data-f="note" placeholder="備註（例如卡在哪裡）" value="${esc(t.note || '')}" />
+        <div class="row"><button class="primary" data-act="save">儲存</button><button class="danger" data-act="del">刪除</button><button class="ghost" data-act="cancel">收起</button></div>
+      </div>` : ''}
+    </div>`;
+  }
+
+  function bindCards(rerender) {
+    $$('#modalBody .kcard').forEach((el) => el.addEventListener('click', (e) => {
+      if (e.target.closest('.kedit')) return;
+      editingTask = editingTask === el.dataset.task ? null : el.dataset.task;
+      rerender();
+    }));
+    $$('#modalBody .kedit').forEach((box) => {
+      const id = box.dataset.edit;
+      const range = box.querySelector('[data-f="progress"]');
+      range.addEventListener('input', () => { range.nextElementSibling.textContent = range.value + '%'; });
+      box.querySelector('[data-act="save"]').addEventListener('click', async () => {
+        const get = (f) => box.querySelector(`[data-f="${f}"]`).value;
+        const status = get('status');
+        const progress = Number(get('progress'));
+        const patch = { id, status, agentId: get('agentId'), note: get('note') };
+        if (status !== 'done') patch.progress = progress;
+        const r = await guard(() => api.upsertTask(patch));
+        if (r) { tasks = r; office.setTasks(tasks); editingTask = null; rerender(); }
+      });
+      box.querySelector('[data-act="del"]').addEventListener('click', async () => {
+        if (!confirm('確定刪除這個任務？')) return;
+        const r = await guard(() => api.deleteTask(id));
+        if (r) { tasks = r; office.setTasks(tasks); editingTask = null; rerender(); }
+      });
+      box.querySelector('[data-act="cancel"]').addEventListener('click', () => { editingTask = null; rerender(); });
+    });
+  }
+
+  function openRoomBoard(roomId) {
+    modalView = { kind: 'room', id: roomId };
+    editingTask = null;
+    renderRoomBoard(roomId);
+  }
+  function renderRoomBoard(roomId) {
+    const doneProjects = new Set(tasks.projects.filter((p) => p.status === 'done').map((p) => p.id));
+    const list = tasks.tasks.filter((t) => t.room === roomId && !doneProjects.has(t.projectId));
+    const avg = list.length ? Math.round(list.reduce((s, t) => s + taskPct(t), 0) / list.length) : 0;
+    const members = state.agents.filter((a) => a.room === roomId).map((a) => a.name).join('、') || '尚無成員';
+    openModal(`${roomLabel(roomId)}　白板`, `成員：${members}・${list.length} 個任務・整體進度 ${avg}%`);
+    const col = (st) => {
+      const items = list.filter((t) => t.status === st).sort((a, b) => (a.updatedAt < b.updatedAt ? 1 : -1));
+      return `<div class="kcol ${st}"><h5><span>${STATUS[st]}</span><span>${items.length}</span></h5>${items.map((t) => taskCard(t)).join('') || ''}</div>`;
+    };
+    const roomAgents = state.agents.filter((a) => a.room === roomId);
+    const others = state.agents.filter((a) => a.room !== roomId);
+    const activeProjects = tasks.projects.filter((p) => p.status !== 'done');
+    $('#modalBody').innerHTML = `<div class="kanban">${['todo', 'doing', 'blocked', 'done'].map(col).join('')}</div>
+      <div class="addtask">
+        <div><label>新任務</label><input id="ntTitle" placeholder="例如：整理競品資料" /></div>
+        <div><label>負責人</label><select id="ntAgent">${roomAgents.concat(others).map((a) => `<option value="${esc(a.id)}">${esc(a.name)}${a.room !== roomId ? `（${esc(roomLabel(a.room))}）` : ''}</option>`).join('')}<option value="">未指派</option></select></div>
+        <div><label>所屬專案</label><select id="ntProject"><option value="">日常事項</option>${activeProjects.filter((p) => p.source !== 'daily').map((p) => `<option value="${esc(p.id)}">${esc(p.title)}</option>`).join('')}<option value="__new">＋ 新專案…</option></select></div>
+        <button class="primary" id="ntAdd">新增</button>
+      </div>`;
+    bindCards(() => renderRoomBoard(roomId));
+    const add = async () => {
+      const title = $('#ntTitle').value.trim();
+      if (!title) { toast('請輸入任務名稱', true); return; }
+      let projectId = $('#ntProject').value;
+      if (projectId === '__new') {
+        const name = prompt('新專案名稱：');
+        if (!name) return;
+        const r = await guard(() => api.upsertProject({ title: name }));
+        if (!r) return;
+        projectId = r.projects.find((p) => p.title === name.trim()).id;
+      }
+      const r = await guard(() => api.upsertTask({ title, agentId: $('#ntAgent').value || null, room: roomId, projectId: projectId || null }));
+      if (r) { tasks = r; office.setTasks(tasks); renderRoomBoard(roomId); $('#ntTitle').focus(); }
+    };
+    $('#ntAdd').addEventListener('click', add);
+    $('#ntTitle').addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
+  }
+
+  function openOverview() {
+    modalView = { kind: 'overview' };
+    editingTask = null;
+    renderOverview();
+  }
+  function renderOverview() {
+    const active = tasks.projects.filter((p) => p.status !== 'done');
+    const done = tasks.projects.filter((p) => p.status === 'done');
+    const allTasks = tasks.tasks.filter((t) => active.some((p) => p.id === t.projectId));
+    const overall = allTasks.length ? Math.round(allTasks.reduce((s, t) => s + taskPct(t), 0) / allTasks.length) : 0;
+    const blockedN = active.filter((p) => p.status === 'blocked').length;
+    openModal('會議室　專案總覽', `進行中 ${active.length} 個・卡住 ${blockedN} 個・整體進度 ${overall}%・已完成 ${done.length} 個`);
+    const card = (p) => {
+      const ts = tasks.tasks.filter((t) => t.projectId === p.id);
+      const pct = projPct(p.id);
+      const byRoom = {};
+      ts.forEach((t) => { (byRoom[t.room] = byRoom[t.room] || []).push(t); });
+      const stuck = ts.filter((t) => t.status === 'blocked');
+      const doing = ts.filter((t) => t.status === 'doing');
+      const name = (t) => (state.agents.find((a) => a.id === t.agentId) || { name: '未指派' }).name;
+      const src = p.source === 'workflow' ? `流程：${p.workflow || ''}` : p.source === 'daily' ? '日常' : '手動';
+      return `<div class="pcard ${p.status}">
+        <div class="top"><div><b>${esc(p.title)}</b><div class="chipline">${esc(src)}・${STATUS[p.status] || ''}・${ts.filter((t) => t.status === 'done').length}/${ts.length} 完成</div></div><div class="pct">${pct}%</div></div>
+        <div class="pbar ${p.status === 'blocked' ? 'blocked' : ''}"><i style="width:${pct}%"></i></div>
+        <div class="rooms">${Object.entries(byRoom).map(([rid, list]) => `<span data-room="${esc(rid)}">${esc(roomLabel(rid))} ${list.filter((t) => t.status === 'done').length}/${list.length}</span>`).join('')}</div>
+        ${stuck.length ? `<div class="stuck">卡在：${stuck.map((t) => `${roomLabel(t.room)}・${name(t)}「${t.title}」${t.note ? '：' + t.note.slice(0, 80) : ''}`).map(esc).join('\n')}</div>`
+          : doing.length ? `<div class="chipline" style="margin-top:8px">正在進行：${doing.map((t) => `${name(t)}「${t.title}」`).map(esc).join('、')}</div>` : ''}
+        ${p.source !== 'workflow' || p.status !== 'doing' ? `<div class="row" style="margin-top:8px"><button class="ghost" data-delp="${esc(p.id)}">刪除專案</button></div>` : ''}
+      </div>`;
+    };
+    $('#modalBody').innerHTML = `
+      <div class="row" style="margin:0 0 12px"><button id="npAdd">＋ 新增專案</button><button class="ghost" id="npClear"${done.length ? '' : ' disabled'}>清除已完成（${done.length}）</button>
+      <span class="hint">點處室標籤可打開該處室白板</span></div>
+      ${active.length ? `<div class="pcards">${active.map(card).join('')}</div>` : '<p class="hint">目前沒有進行中的專案。下任務給流程會自動建立，也可以手動新增。</p>'}
+      ${done.length ? `<h4 style="color:var(--muted)">已完成</h4><div class="pcards">${done.slice(0, 12).map(card).join('')}</div>` : ''}`;
+    $$('#modalBody [data-room]').forEach((el) => el.addEventListener('click', () => openRoomBoard(el.dataset.room)));
+    $$('#modalBody [data-delp]').forEach((el) => el.addEventListener('click', async () => {
+      if (!confirm('刪除這個專案和它的所有任務？')) return;
+      const r = await guard(() => api.deleteProject(el.dataset.delp));
+      if (r) { tasks = r; office.setTasks(tasks); renderOverview(); }
+    }));
+    $('#npAdd').addEventListener('click', async () => {
+      const name = prompt('新專案名稱：');
+      if (!name) return;
+      const r = await guard(() => api.upsertProject({ title: name }));
+      if (r) { tasks = r; office.setTasks(tasks); renderOverview(); }
+    });
+    $('#npClear').addEventListener('click', async () => {
+      const r = await guard(() => api.clearDoneProjects());
+      if (r) { tasks = r; office.setTasks(tasks); renderOverview(); }
+    });
+  }
+
+  // ================= 用量 =================
+  function fmtTime(iso) {
+    if (!iso) return '';
+    const d = new Date(iso);
+    const mins = Math.round((d - Date.now()) / 60000);
+    const when = d.toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', hour: '2-digit', minute: '2-digit', hour12: false });
+    if (mins <= 0) return when;
+    return mins < 60 ? `${mins} 分鐘後（${when}）` : mins < 1440 ? `${Math.round(mins / 60)} 小時後（${when}）` : when;
+  }
+  function renderUsage() {
+    const ids = Object.keys(usage);
+    if (!ids.length) { $('#usageList').innerHTML = '<p class="hint">讀取中…</p>'; return; }
+    $('#usageList').innerHTML = ids.map((id) => {
+      const u = usage[id];
+      const src = u.source === 'unofficial' ? '非官方介面' : u.mode === 'api' ? 'API 估算' : '本機紀錄';
+      const wins = (u.windows || []).map((w) => {
+        const left = Math.max(0, Math.round(100 - (w.usedPct || 0)));
+        const cls = left > 50 ? '' : left > 20 ? 'mid' : 'low';
+        return `<div class="uwin"><div class="row" style="margin:0;justify-content:space-between"><span>${esc(w.name)}：剩 <b>${left}%</b></span><span class="hint" style="margin:0">${w.resetsAt ? '重置 ' + esc(fmtTime(w.resetsAt)) : ''}</span></div>
+          <div class="pbar"><i class="${cls}" style="width:${left}%"></i></div></div>`;
+      }).join('');
+      const money = u.mode === 'api' ? `・本月約 US$${(u.month.cost || 0).toFixed(3)}（${(u.month.inTok + u.month.outTok).toLocaleString()} token）` : '';
+      return `<div class="ucard">
+        <div class="top"><b style="color:${esc(u.color)}">${esc(u.label)}</b><span class="src">${esc(src)}</span></div>
+        <div class="stat">${esc(u.agents.join('、'))}・${u.mode === 'cli' ? 'CLI' : 'API'}</div>
+        ${wins}
+        <div class="stat">今天 AI Office 呼叫 ${u.today.calls} 次${u.today.fail ? `（失敗 ${u.today.fail}）` : ''}${money}</div>
+        ${u.last429 ? `<div class="err">最近一次額度用完：${esc(new Date(u.last429).toLocaleString('zh-TW', { hour12: false }))}</div>` : ''}
+        ${u.error ? `<div class="err">${esc(u.error)}</div>` : ''}
+        ${u.note ? `<div class="hint">${esc(u.note)}</div>` : ''}
+      </div>`;
+    }).join('');
+  }
+  async function loadUsage(force) {
+    if (!api.getUsage) { $('#usageList').innerHTML = '<p class="hint">這個執行方式不支援用量查詢。</p>'; return; }
+    try {
+      usage = await api.getUsage(force);
+      office.setUsage(usage);
+      renderUsage();
+      $('#usageTime').textContent = '更新於 ' + new Date().toLocaleTimeString('zh-TW', { hour12: false });
+    } catch (e) { $('#usageList').innerHTML = `<p class="hint">讀取失敗：${esc(e.message)}</p>`; }
+  }
+  $('#usageRefresh').addEventListener('click', () => loadUsage(true));
+  setInterval(() => loadUsage(false), 60000);
+
   function renderAll() {
     renderTask();
     renderAgents();
@@ -410,4 +639,5 @@
   setRunning(!!state.running);
   if (api.isPreview) logEntry('system', null, '瀏覽器預覽模式：使用模擬 AI。要串接真的 AI，請用 npm start 以 Electron 執行。');
   checkUpdate(false);
+  loadUsage(false);
 })();

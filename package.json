@@ -1,13 +1,13 @@
 {
   "name": "ai-office",
-  "version": "0.2.4",
+  "version": "0.3.0",
   "description": "避難所剖面風格的 AI 辦公室：多個 AI（Claude / Codex / Gemini / Grok）以角色身分協作任務",
   "main": "src/main/main.js",
   "scripts": {
     "start": "node src/server/server.js",
     "electron": "electron .",
     "dev": "electron . --dev",
-    "test": "node scripts/smoke-test.js",
+    "test": "node scripts/smoke-test.js && node scripts/board-test.js",
     "check-cli": "node scripts/check-cli.js"
   },
   "license": "MIT",
@@ -19,6 +19,6 @@
       "repo": "MAO-96/ai-office",
       "branch": "main"
     },
-    "notes": "Gemma 改用 Antigravity CLI（agy）：Google 已停止 Gemini CLI 的個人帳號登入"
+    "notes": "新增處室白板、會議室專案總覽（同一份任務資料）與各 AI 剩餘用量顯示"
   }
 }

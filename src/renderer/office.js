@@ -309,14 +309,22 @@
       for (const [id, r] of this.rt) if (Math.abs(p.x - r.x) < 18 && p.y < r.y + 4 && p.y > r.y - 62) return id;
       return null;
     }
+    hotspotAt(p) {
+      return (this.hot || []).find((h) => p.x >= h.x && p.x <= h.x + h.w && p.y >= h.y && p.y <= h.y + h.h);
+    }
     onClick(e) {
-      const id = this.hit(this.toWorld(e));
+      const p = this.toWorld(e);
+      const spot = this.hotspotAt(p);
+      if (spot && !this.hit(p)) { if (this.opts.onBoard) this.opts.onBoard(spot.kind, spot.id); return; }
+      const id = this.hit(p);
       this.selected = id;
       if (this.opts.onSelect) this.opts.onSelect(id);
     }
     onHover(e) {
-      this.hover = this.hit(this.toWorld(e));
-      this.canvas.style.cursor = this.hover ? 'pointer' : 'default';
+      const p = this.toWorld(e);
+      this.hover = this.hit(p);
+      this.hoverSpot = this.hover ? null : this.hotspotAt(p);
+      this.canvas.style.cursor = this.hover || this.hoverSpot ? 'pointer' : 'default';
     }
 
     draw() {
@@ -327,6 +335,7 @@
       ctx.setTransform(v.s * v.dpr, 0, 0, v.s * v.dpr, v.ox * v.dpr, v.oy * v.dpr);
       ctx.imageSmoothingEnabled = false;
 
+      this.hot = [];
       this.drawSurface(ctx);
       this.drawRock(ctx);
       this.drawShaft(ctx);
@@ -443,6 +452,7 @@
       ctx.fillRect(r.x, r.feet - 70, 6, 70);
 
       this.drawDecor(ctx, r);
+      if (r.id !== 'meeting') this.drawBoard(ctx, r);
       r.desks.forEach((dx) => this.drawDesk(ctx, r, dx));
 
       // 名牌
@@ -462,14 +472,7 @@
       const right = r.x + r.w - 36;
       if (r.id === 'meeting') {
         // 長桌 + 大螢幕
-        ctx.fillStyle = '#2a2a33';
-        ctx.fillRect(r.x + r.w / 2 - 120, r.y + 26, 240, 64);
-        ctx.fillStyle = this.running ? '#3d6b8f' : '#1f2c38';
-        ctx.fillRect(r.x + r.w / 2 - 114, r.y + 32, 228, 52);
-        ctx.fillStyle = '#e8eef5';
-        ctx.font = `12px ${FONT}`;
-        ctx.textAlign = 'center';
-        ctx.fillText(this.running ? '任務進行中…' : 'AI OFFICE', r.x + r.w / 2, r.y + 62);
+        this.drawOverview(ctx, r);
         ctx.fillStyle = '#5a3a24';
         ctx.fillRect(r.x + 80, f - 24, r.w - 160, 7);
         ctx.fillStyle = '#3e2818';
@@ -478,10 +481,10 @@
         return;
       }
       if (r.id === 'planning') {
-        ctx.fillStyle = '#e9e4d8'; ctx.fillRect(right - 70, r.y + 30, 80, 50);
-        ctx.fillStyle = '#c94f4f'; ctx.fillRect(right - 62, r.y + 40, 30, 3);
-        ctx.fillStyle = '#4f7ac9'; ctx.fillRect(right - 62, r.y + 50, 50, 3);
-        ctx.fillStyle = '#4f9a5a'; ctx.fillRect(right - 62, r.y + 60, 40, 3);
+        // 檔案櫃
+        ctx.fillStyle = '#8a6f4a'; ctx.fillRect(right - 16, f - 58, 34, 58);
+        ctx.fillStyle = '#6e573a'; ctx.fillRect(right - 12, f - 52, 26, 22); ctx.fillRect(right - 12, f - 26, 26, 22);
+        ctx.fillStyle = '#d9c9a3'; ctx.fillRect(right - 3, f - 43, 8, 3); ctx.fillRect(right - 3, f - 17, 8, 3);
       } else if (r.id === 'research') {
         ctx.fillStyle = '#4a3020'; ctx.fillRect(right - 30, f - 90, 50, 90);
         const cols = ['#c94f4f', '#4f7ac9', '#d9a43b', '#4f9a5a', '#8a5ab0'];
@@ -559,6 +562,13 @@
       ctx.fillRect(r.x - w / 2, top - 16, 3, 15);
       ctx.fillStyle = '#f3e3c3';
       ctx.fillText(label, r.x + 1, top - 5);
+      const left = this.remainingPct(a.engine);
+      if (left != null) {
+        ctx.fillStyle = 'rgba(18,14,11,0.82)';
+        ctx.fillRect(r.x - w / 2, top - 1, w, 4);
+        ctx.fillStyle = left > 50 ? '#6cc16f' : left > 20 ? '#e0b23a' : '#d9614f';
+        ctx.fillRect(r.x - w / 2 + 1, top, Math.max(1, (w - 2) * left / 100), 2);
+      }
 
       if (this.selected === r.id || this.hover === r.id) {
         ctx.fillStyle = '#ffd166';
@@ -600,6 +610,107 @@
       } else if (r.bubble) {
         r.bubble = null;
       }
+    }
+
+    // ---------- 任務板 ----------
+    setTasks(tasks) { this.tasks = tasks || { projects: [], tasks: [] }; }
+    setUsage(usage) { this.usage = usage || {}; }
+    remainingPct(engine) {
+      const u = this.usage && this.usage[engine];
+      if (!u || !u.windows || !u.windows.length) return null;
+      const used = Math.max(...u.windows.map((w) => w.usedPct || 0));
+      return Math.max(0, 100 - used);
+    }
+    activeTasks() {
+      const t = this.tasks || { projects: [], tasks: [] };
+      const done = new Set(t.projects.filter((p) => p.status === 'done').map((p) => p.id));
+      return t.tasks.filter((x) => !done.has(x.projectId));
+    }
+    roomStats(roomId) {
+      const ts = this.activeTasks().filter((x) => x.room === roomId);
+      const c = { todo: 0, doing: 0, blocked: 0, done: 0 };
+      ts.forEach((x) => { c[x.status] = (c[x.status] || 0) + 1; });
+      const progress = ts.length ? Math.round(ts.reduce((s, x) => s + (x.status === 'done' ? 100 : x.progress || 0), 0) / ts.length) : 0;
+      return { ...c, total: ts.length, progress };
+    }
+    drawBoard(ctx, r) {
+      const w = 132, h = 48;
+      const x = Math.round(r.x + r.w / 2 - w / 2), y = r.y + 16;
+      const st = this.roomStats(r.id);
+      const hov = this.hoverSpot && this.hoverSpot.id === r.id;
+      ctx.fillStyle = '#9a8566';
+      ctx.fillRect(x - 3, y - 3, w + 6, h + 6);
+      ctx.fillStyle = hov ? '#ffffff' : '#ece7da';
+      ctx.fillRect(x, y, w, h);
+      ctx.font = `bold 10px ${FONT}`;
+      ctx.textAlign = 'left';
+      ctx.fillStyle = '#3a3128';
+      ctx.fillText('白板', x + 6, y + 13);
+      ctx.textAlign = 'right';
+      ctx.fillStyle = '#7a6d5c';
+      ctx.font = `9px ${FONT}`;
+      ctx.fillText(st.total ? `進度 ${st.progress}%` : '點我新增任務', x + w - 6, y + 13);
+      const items = [['待辦', st.todo, '#7a6d5c'], ['進行', st.doing, '#3d7fc4'], ['卡住', st.blocked, '#c9483a'], ['完成', st.done, '#3f9a52']];
+      ctx.textAlign = 'center';
+      items.forEach(([name, n, col], i) => {
+        const cx = x + 18 + i * 32;
+        ctx.fillStyle = n ? col : '#b9b0a0';
+        ctx.font = `bold 12px ${FONT}`;
+        ctx.fillText(String(n), cx, y + 30);
+        ctx.font = `8px ${FONT}`;
+        ctx.fillText(name, cx, y + 40);
+      });
+      ctx.fillStyle = '#d6cfbf';
+      ctx.fillRect(x + 6, y + h - 5, w - 12, 2);
+      ctx.fillStyle = st.blocked ? '#c9483a' : '#3f9a52';
+      ctx.fillRect(x + 6, y + h - 5, (w - 12) * st.progress / 100, 2);
+      this.hot.push({ kind: 'room', id: r.id, x: x - 3, y: y - 3, w: w + 6, h: h + 6 });
+    }
+    drawOverview(ctx, r) {
+      const w = 300, h = 76;
+      const x = Math.round(r.x + r.w / 2 - w / 2), y = r.y + 20;
+      const hov = this.hoverSpot && this.hoverSpot.kind === 'overview';
+      ctx.fillStyle = '#2a2a33';
+      ctx.fillRect(x - 6, y - 6, w + 12, h + 12);
+      ctx.fillStyle = hov ? '#26384a' : '#1c2836';
+      ctx.fillRect(x, y, w, h);
+      const t = this.tasks || { projects: [], tasks: [] };
+      const active = t.projects.filter((p) => p.status !== 'done');
+      const doneN = t.projects.length - active.length;
+      ctx.textAlign = 'left';
+      ctx.font = `bold 10px ${FONT}`;
+      ctx.fillStyle = '#9fc3e6';
+      ctx.fillText('專案總覽', x + 8, y + 13);
+      ctx.textAlign = 'right';
+      ctx.font = `9px ${FONT}`;
+      ctx.fillStyle = '#7f97ad';
+      ctx.fillText(`進行中 ${active.length}・已完成 ${doneN}${this.running ? '・執行中…' : ''}`, x + w - 8, y + 13);
+      const rows = active.slice(0, 3);
+      if (!rows.length) {
+        ctx.textAlign = 'center';
+        ctx.fillStyle = '#7f97ad';
+        ctx.font = `11px ${FONT}`;
+        ctx.fillText('目前沒有進行中的專案', x + w / 2, y + 46);
+      }
+      rows.forEach((p, i) => {
+        const ts = t.tasks.filter((k) => k.projectId === p.id);
+        const prog = ts.length ? Math.round(ts.reduce((s, k) => s + (k.status === 'done' ? 100 : k.progress || 0), 0) / ts.length) : 0;
+        const yy = y + 28 + i * 16;
+        ctx.textAlign = 'left';
+        ctx.font = `10px ${FONT}`;
+        ctx.fillStyle = p.status === 'blocked' ? '#ff9b8a' : '#e8eef5';
+        let title = p.title;
+        while (ctx.measureText(title).width > 130 && title.length > 2) title = title.slice(0, -2) + '…';
+        ctx.fillText(title, x + 8, yy + 4);
+        ctx.fillStyle = '#33465a';
+        ctx.fillRect(x + 146, yy - 3, 110, 6);
+        ctx.fillStyle = p.status === 'blocked' ? '#d9614f' : '#6cc16f';
+        ctx.fillRect(x + 146, yy - 3, 110 * prog / 100, 6);
+        ctx.textAlign = 'right';
+        ctx.fillStyle = '#c9d6e3';
+        ctx.fillText(p.status === 'blocked' ? '卡住' : `${prog}%`, x + w - 8, yy + 4);
+      });
+      this.hot.push({ kind: 'overview', id: 'meeting', x: x - 6, y: y - 6, w: w + 12, h: h + 12 });
     }
 
     wrap(ctx, text, maxW) {

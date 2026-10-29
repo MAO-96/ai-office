@@ -4,8 +4,25 @@ const { runApi } = require('./api');
 const MockAdapter = require('../../shared/mock-adapter');
 const { composePrompt } = require('../../shared/orchestrator-core');
 
-function createRunner(store, { forceReal = false } = {}) {
-  return async function runAgent(agent, prompt, { signal, onChunk } = {}) {
+function createRunner(store, { forceReal = false, usage = null } = {}) {
+  const inner = makeInner(store, forceReal);
+  // 記錄每次呼叫的成敗與 token，供用量面板使用（模擬模式不記）
+  return async function runAgent(agent, prompt, opts = {}) {
+    const real = forceReal || !store.getSettings().mockMode;
+    let tokens = null;
+    try {
+      const out = await inner(agent, prompt, { ...opts, onUsage: (u) => { tokens = u; } });
+      if (real && usage) usage.record(agent, { ok: true, tokens });
+      return out;
+    } catch (e) {
+      if (real && usage && !(opts.signal && opts.signal.aborted)) usage.record(agent, { ok: false, error: e.message });
+      throw e;
+    }
+  };
+}
+
+function makeInner(store, forceReal) {
+  return async function runAgent(agent, prompt, { signal, onChunk, onUsage } = {}) {
     const settings = store.getSettings();
     if (settings.mockMode && !forceReal) return MockAdapter.run(agent, prompt, { signal, onChunk });
 
@@ -25,7 +42,7 @@ function createRunner(store, { forceReal = false } = {}) {
       });
     }
     const api = engine.api;
-    return runApi({ api, agent, prompt, key: api && store.getKey(api.keyEnv), signal, onChunk });
+    return runApi({ api, agent, prompt, key: api && store.getKey(api.keyEnv), signal, onChunk, onUsage });
   };
 }
 

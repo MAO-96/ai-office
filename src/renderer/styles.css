@@ -57,7 +57,7 @@ canvas#office { display: block; image-rendering: pixelated; }
 
 /* 側邊面板 */
 .panel { background: var(--panel); border-left: 3px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
-.tabs { display: grid; grid-template-columns: repeat(4, 1fr); border-bottom: 3px solid var(--line); }
+.tabs { display: grid; grid-template-columns: repeat(5, 1fr); border-bottom: 3px solid var(--line); }
 .tabs button { background: none; border: 0; padding: 10px 0; color: var(--muted); cursor: pointer; font-weight: 700; border-bottom: 3px solid transparent; margin-bottom: -3px; }
 .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
 .tab { padding: 14px 16px; overflow: auto; flex: 1; }
@@ -118,3 +118,47 @@ button.ghost { background: none; }
 .cli-result .bad { color: #ffb4a8; }
 .toast { position: fixed; bottom: 18px; left: 50%; transform: translateX(-50%); background: #120e0b; border: 2px solid var(--accent); padding: 8px 16px; z-index: 10; }
 .toast.err { border-color: var(--danger); }
+
+/* ---------- 白板與總覽 ---------- */
+.modal-back { position: fixed; inset: 0; background: rgba(10,8,6,0.7); display: flex; align-items: center; justify-content: center; z-index: 15; }
+.modal { width: min(1100px, 94vw); max-height: 88vh; background: var(--panel); border: 3px solid var(--accent); display: flex; flex-direction: column; }
+.modal-head { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-bottom: 2px solid var(--line); }
+.modal-head strong { font-size: 17px; }
+.modal-head .ghost { margin-left: auto; }
+.modal-body { padding: 14px; overflow: auto; }
+.kanban { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+.kcol { background: var(--bg); border: 2px solid var(--line); min-height: 120px; }
+.kcol h5 { margin: 0; padding: 6px 10px; font-size: 13px; border-bottom: 2px solid var(--line); display: flex; justify-content: space-between; }
+.kcol.todo h5 { color: var(--muted); } .kcol.doing h5 { color: #7fb2e8; } .kcol.blocked h5 { color: var(--danger); } .kcol.done h5 { color: var(--ok); }
+.kcard { margin: 8px; padding: 8px; background: var(--panel-2); border: 2px solid var(--line); cursor: pointer; }
+.kcard:hover { border-color: var(--accent); }
+.kcard .t { font-weight: 700; }
+.kcard .m { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.kcard .n { font-size: 11px; color: #ffb4a8; margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
+.pbar { height: 5px; background: #3a2f25; margin-top: 6px; }
+.pbar i { display: block; height: 100%; background: var(--ok); }
+.pbar.blocked i { background: var(--danger); }
+.kedit { margin-top: 8px; display: grid; gap: 6px; }
+.kedit .row { margin-top: 0; }
+.addtask { margin-top: 14px; border-top: 2px solid var(--line); padding-top: 10px; display: grid; grid-template-columns: 2fr 1fr 1.4fr auto; gap: 8px; align-items: end; }
+.addtask label { margin: 0 0 4px; }
+.pcards { display: grid; grid-template-columns: repeat(auto-fill, minmax(300px, 1fr)); gap: 12px; }
+.pcard { background: var(--bg); border: 2px solid var(--line); padding: 10px 12px; }
+.pcard.blocked { border-color: var(--danger); }
+.pcard.done { opacity: 0.6; }
+.pcard .top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.pcard .pct { font-size: 20px; font-weight: 800; color: var(--accent); }
+.pcard .rooms { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
+.pcard .rooms span { font-size: 11px; padding: 2px 6px; background: var(--panel-2); border: 1px solid var(--line); cursor: pointer; }
+.pcard .stuck { margin-top: 8px; font-size: 12px; color: #ffb4a8; white-space: pre-wrap; word-break: break-word; }
+.chipline { font-size: 11px; color: var(--muted); }
+.ucard { border: 2px solid var(--line); padding: 10px; margin: 10px 0; background: var(--panel-2); }
+.ucard .top { display: flex; justify-content: space-between; align-items: center; }
+.ucard .src { font-size: 10px; padding: 1px 6px; border: 1px solid var(--line); color: var(--muted); }
+.uwin { margin-top: 8px; font-size: 12px; }
+.uwin .pbar { height: 8px; }
+.uwin .pbar i.mid { background: var(--accent); } .uwin .pbar i.low { background: var(--danger); }
+.ucard .err { color: #ffb4a8; font-size: 12px; margin-top: 6px; }
+.ucard .stat { font-size: 12px; color: var(--muted); margin-top: 6px; }
+.modal-back[hidden] { display: none; }
+[hidden] { display: none !important; }

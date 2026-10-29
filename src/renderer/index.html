@@ -36,6 +36,7 @@
       <nav class="tabs">
         <button data-tab="task" class="active">任務</button>
         <button data-tab="agents">角色</button>
+        <button data-tab="usage">用量</button>
         <button data-tab="flows">流程</button>
         <button data-tab="settings">設定</button>
       </nav>
@@ -95,6 +96,12 @@
         </form>
       </div>
 
+      <div class="tab" id="tab-usage" hidden>
+        <div class="row" style="margin:0 0 6px"><button id="usageRefresh">重新整理</button><span class="hint" id="usageTime"></span></div>
+        <p class="hint">角色名牌下方的小條就是剩餘額度（綠＝充足、黃＝偏少、紅＝快用完）。</p>
+        <div id="usageList"></div>
+      </div>
+
       <div class="tab" id="tab-flows" hidden>
         <p class="hint">流程分兩種：<b>pipeline</b>（固定管線，依序交棒）與 <b>meeting</b>（會議討論，輪流發言再由主持人總結）。提示詞可用 {task}、{prev}、{step1}…、{transcript}、{round}。</p>
         <div id="flowCards"></div>
@@ -127,6 +134,13 @@
       </div>
     </aside>
   </main>
+
+  <div class="modal-back" id="modal" hidden>
+    <div class="modal">
+      <div class="modal-head"><strong id="modalTitle"></strong><span class="hint" id="modalSub"></span><button class="ghost" id="modalClose">✕</button></div>
+      <div class="modal-body" id="modalBody"></div>
+    </div>
+  </div>
 
   <script src="../shared/orchestrator-core.js"></script>
   <script src="../shared/mock-adapter.js"></script>

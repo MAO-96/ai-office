@@ -1,6 +1,6 @@
 {
   "name": "ai-office",
-  "version": "0.2.1",
+  "version": "0.2.2",
   "description": "避難所剖面風格的 AI 辦公室：多個 AI（Claude / Codex / Gemini / Grok）以角色身分協作任務",
   "main": "src/main/main.js",
   "scripts": {
@@ -19,6 +19,6 @@
       "repo": "MAO-96/ai-office",
       "branch": "main"
     },
-    "notes": "修正 Windows 找不到 CLI 時的亂碼；自動讀取最新 PATH，剛安裝的 AI 不用重開機；找不到時直接提示安裝指令"
+    "notes": "修正 Gemini 在工作目錄不被信任時無法執行；修正 Windows 找不到 CLI 的亂碼並自動讀取最新 PATH"
   }
 }

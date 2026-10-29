@@ -18,6 +18,7 @@ function createRunner(store, { forceReal = false } = {}) {
         agent,
         prompt: composePrompt(agent, prompt),
         cwd: store.getWorkspace(),
+        env: engine.cli && engine.cli.env,
         signal,
         onChunk,
         timeoutMs: (settings.timeoutMinutes || 10) * 60 * 1000,

@@ -111,6 +111,40 @@ function createUsage({ file, store, emit }) {
     return { error: '紀錄裡還沒有用量資訊，執行過一次後就會顯示' };
   }
 
+  // ---------- Antigravity（Gemini） ----------
+  // Google 沒有公開的查詢方式。若使用者自行安裝了第三方工具 agy-hud，
+  // 它會把額度寫進本機快取檔；AI Office 只「讀」這個檔，不碰登入資訊、不呼叫 Google。
+  function agyHudWindows() {
+    const dirs = [
+      path.join(os.homedir(), '.gemini', 'antigravity-cli'),
+      process.env.XDG_DATA_HOME && path.join(process.env.XDG_DATA_HOME, 'antigravity-cli'),
+      process.env.APPDATA && path.join(process.env.APPDATA, 'antigravity-cli'),
+      process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'antigravity-cli'),
+    ].filter(Boolean);
+    const file = dirs.map((d) => path.join(d, 'agy-hud-quota-cache.json')).find((f) => fs.existsSync(f));
+    if (!file) return null;
+    let j;
+    try { j = JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) { return { error: '無法讀取 agy-hud 的額度快取' }; }
+    const models = Array.isArray(j.data) ? j.data : [];
+    const google = models.filter((m) => m.modelProvider === 'MODEL_PROVIDER_GOOGLE' || /gemini/i.test(`${m.id} ${m.displayName || ''}`));
+    const pool = google.length ? google : models;
+    const now = Date.now();
+    const pick = (key, label) => {
+      let worst = null;
+      for (const m of pool) {
+        const w = m.windows && m.windows[key];
+        if (!w || w.remainingFraction == null) continue;
+        const expired = w.resetTime && Date.parse(w.resetTime) < now;
+        const left = expired ? 1 : Number(w.remainingFraction);
+        if (!worst || left < worst.left) worst = { left, model: m.displayName || m.id, resetTime: expired ? null : w.resetTime };
+      }
+      return worst ? { name: `${label}（${worst.model}）`, usedPct: Math.round((1 - worst.left) * 1000) / 10, resetsAt: worst.resetTime } : null;
+    };
+    const windows = [pick('fiveHour', '5 小時'), pick('weekly', '每週')].filter(Boolean);
+    if (!windows.length) return { error: 'agy-hud 快取裡還沒有額度資料，開一次 agy 互動畫面就會更新' };
+    return { windows, source: 'agyhud', asOf: j.lastRefreshed ? new Date(j.lastRefreshed).toISOString() : null, plan: j.tier || null };
+  }
+
   // ---------- 彙整 ----------
   async function refresh(engineId) {
     const engines = store.getEngines();
@@ -130,7 +164,11 @@ function createUsage({ file, store, emit }) {
       let r = null;
       if (mode === 'cli' && engineId === 'claude') r = await claudeWindows();
       else if (mode === 'cli' && engineId === 'codex') r = codexWindows();
-      else if (mode === 'cli' && engineId === 'gemini') out.note = 'Google 沒有提供程式查詢剩餘額度的方式，可在 PowerShell 執行 agy 後輸入 /usage 查看。';
+      else if (mode === 'cli' && engineId === 'gemini') {
+        r = agyHudWindows();
+        if (!r) out.note = 'Google 沒有公開的額度查詢方式。可在 PowerShell 執行 agy 後輸入 /usage 查看；或自行安裝第三方工具 agy-hud，AI Office 會自動讀它的額度紀錄（說明見 README）。';
+        else if (r.asOf) out.note = `資料來自 agy-hud，最後更新 ${new Date(r.asOf).toLocaleString('zh-TW', { hour12: false })}${r.plan ? `・方案：${r.plan}` : ''}。`;
+      }
       else if (mode === 'api') out.note = e.api && e.api.pricing ? '依 API 回應的 token 數 × 單價估算，實際以供應商帳單為準。' : '依 API 回應的 token 數統計。';
       if (r) { out.windows = r.windows || []; out.source = r.source || out.source; out.error = r.error || null; out.asOf = r.asOf || null; }
     } catch (err) {

@@ -596,7 +596,7 @@
     if (!ids.length) { $('#usageList').innerHTML = '<p class="hint">讀取中…</p>'; return; }
     $('#usageList').innerHTML = ids.map((id) => {
       const u = usage[id];
-      const src = u.source === 'unofficial' ? '非官方介面' : u.mode === 'api' ? 'API 估算' : '本機紀錄';
+      const src = u.source === 'unofficial' ? '非官方介面' : u.source === 'agyhud' ? 'agy-hud 紀錄' : u.mode === 'api' ? 'API 估算' : '本機紀錄';
       const wins = (u.windows || []).map((w) => {
         const left = Math.max(0, Math.round(100 - (w.usedPct || 0)));
         const cls = left > 50 ? '' : left > 20 ? 'mid' : 'low';

@@ -43,6 +43,8 @@ function registerIpc() {
     'keys:save': (k) => svc.saveKey(k),
     'run:start': (r) => svc.startRun(r),
     'run:stop': () => svc.stopRun(),
+    'ask:answer': (b) => svc.answerAsk(b),
+    'note:add': (b) => svc.addNote(b),
     'agent:test': (id) => svc.testAgent(id),
     'tasks:get': () => svc.getTasks(),
     'tasks:upsert': (t) => svc.upsertTask(t),

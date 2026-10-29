@@ -175,3 +175,15 @@ button.ghost { background: none; }
 .dres h4 { margin: 0 0 6px; }
 .verdict { font-weight: 800; }
 .verdict.ok { color: var(--ok); } .verdict.fix { color: var(--danger); }
+
+/* ---------- 追問與追加指示 ---------- */
+.notebox { margin-top: 12px; border: 2px dashed var(--line); padding: 8px 10px; }
+.notebox label { margin-top: 0 !important; }
+.notes { margin: 6px 0 0; padding-left: 18px; font-size: 12px; color: var(--muted); }
+.askbanner { margin-top: 10px; width: 100%; background: var(--accent); color: var(--accent-ink); border-color: var(--accent); animation: pulse 1.4s steps(2) infinite; }
+.askq { margin-bottom: 16px; }
+.askq .q { font-weight: 700; margin-bottom: 6px; }
+.askq .opts { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 6px; }
+.askq .opts button { font-weight: 400; }
+.askq .opts button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
+.askfoot { display: flex; gap: 8px; border-top: 2px solid var(--line); padding-top: 10px; }

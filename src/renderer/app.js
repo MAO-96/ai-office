@@ -79,7 +79,8 @@
     if (!task) { toast('請先輸入任務內容', true); return; }
     $('#resultBox').hidden = true;
     setRunning(true);
-    const r = await guard(() => api.startRun($('#wfSelect').value, task));
+    noteListEl().innerHTML = '';
+    const r = await guard(() => api.startRun($('#wfSelect').value, task, { clarify: $('#clarifyChk').checked }));
     setRunning(false);
     if (r) {
       lastReport = r.file;
@@ -94,7 +95,22 @@
   function setRunning(on) {
     $('#runBtn').disabled = on;
     $('#stopBtn').disabled = !on;
+    $('#noteBox').hidden = !on;
   }
+  const noteListEl = () => $('#noteList');
+  try { const v = localStorage.getItem('aiOffice.clarify'); if (v != null) $('#clarifyChk').checked = v === '1'; } catch (_) { /* 無儲存空間 */ }
+  $('#clarifyChk').addEventListener('change', (e) => { try { localStorage.setItem('aiOffice.clarify', e.target.checked ? '1' : '0'); } catch (_) { /* ignore */ } });
+  async function sendNote(inputSel) {
+    const text = $(inputSel).value.trim();
+    if (!text) return;
+    const r = await guard(() => api.addNote(text));
+    if (!r) return;
+    $(inputSel).value = '';
+    if (r.notes) { noteListEl().innerHTML = r.notes.map((n) => `<li>${esc(n)}</li>`).join(''); toast('已追加，下一位成員開始時生效'); }
+    if (r.devops) { dev = r.devops; renderDev(); toast(r.devops.phase === 'implementing' ? '已交給工程接著修改' : '已追加'); }
+  }
+  $('#noteSend').addEventListener('click', () => sendNote('#noteInput'));
+  $('#noteInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendNote('#noteInput'); });
 
   // ---------- 角色 ----------
   function miniSprite(canvas, look, bg) {
@@ -331,6 +347,9 @@
     office.onEvent(type, d);
     if (type === 'update') showUpdate(d);
     if (type === 'devops') { dev = d; renderDev(); }
+    if (type === 'ask') { pendingAsk = d; renderAskBanners(); openAsk(d); }
+    if (type === 'ask-done') { pendingAsk = null; renderAskBanners(); if (modalView && modalView.kind === 'ask') closeModal(); }
+    if (type === 'note' && d) { noteListEl().innerHTML = d.notes.map((n) => `<li>${esc(n)}</li>`).join(''); }
     if (type === 'tasks') { tasks = d; office.setTasks(tasks); refreshModal(); }
     if (type === 'usage' && d) { usage[d.engine] = d; office.setUsage(usage); renderUsage(); }
     if (type === 'log') {
@@ -352,7 +371,7 @@
       const st = $('#runStatus');
       st.className = 'run-status';
       if (d.status === 'started') { st.classList.add('running'); $('#runLabel').textContent = d.label; $('#runBar').style.width = '3%'; setRunning(true); }
-      if (d.status === 'step') { st.classList.add('running'); $('#runLabel').textContent = `${d.index}/${d.total}　${d.label}`; $('#runBar').style.width = `${Math.round(((d.index - 0.5) / d.total) * 100)}%`; }
+      if (d.status === 'step') { st.classList.add('running'); $('#runLabel').textContent = d.total ? `${d.index}/${d.total}　${d.label}` : d.label; $('#runBar').style.width = `${Math.round(((d.index - 0.5) / d.total) * 100)}%`; }
       if (d.status === 'finished') { st.classList.add('done'); $('#runLabel').textContent = '完成'; $('#runBar').style.width = '100%'; }
       if (d.status === 'failed') { st.classList.add('failed'); $('#runLabel').textContent = '失敗：' + (d.error || ''); }
       if (d.status === 'stopped') { $('#runLabel').textContent = '已停止'; $('#runBar').style.width = '0'; }
@@ -438,6 +457,7 @@
     // 正在輸入時不要重畫，避免打字被打斷
     const a = document.activeElement;
     if (a && $('#modalBody').contains(a) && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return;
+    if (modalView.kind === 'ask') return;
     if (modalView.kind === 'room') renderRoomBoard(modalView.id); else renderOverview();
   }
 
@@ -640,7 +660,7 @@
 
   // ================= 改版 =================
   let dev = state.devops || { phase: 'idle', steps: [] };
-  const DEV_BUSY = ['preparing', 'planning', 'implementing', 'testing', 'fixing', 'reviewing', 'publishing'];
+  const DEV_BUSY = ['preparing', 'clarifying', 'planning', 'implementing', 'testing', 'fixing', 'reviewing', 'publishing'];
   function fillDevSelects() {
     const opts = (pref) => state.agents.map((a) => `<option value="${esc(a.id)}"${a.id === pref ? ' selected' : ''}>${esc(a.name)}（${esc(engineOf(a).label)}・${a.mode === 'cli' ? 'CLI' : 'API'}）</option>`).join('');
     const pick = (sel, fallback) => { const cur = $(sel).value; return cur && state.agents.some((a) => a.id === cur) ? cur : fallback; };
@@ -653,6 +673,11 @@
     if (!api.devStatus) { $('#tab-devops').innerHTML = '<p class="hint">這個執行方式不支援改版，請用桌面的 AI Office 捷徑開啟。</p>'; return; }
     const busy = DEV_BUSY.includes(dev.phase);
     $('#devStart').disabled = busy || dev.phase === 'awaiting';
+    const canNote = (busy && dev.phase !== 'publishing') || dev.phase === 'awaiting';
+    $('#devNoteBox').hidden = !canNote;
+    $('#devNoteLabel').textContent = dev.phase === 'awaiting' ? '追加修改（工程會在目前的修改上接著改，再跑一次測試與審查）' : '追加指示（下一位成員開始工作時生效）';
+    $('#devNoteSend').textContent = dev.phase === 'awaiting' ? '交給工程修改' : '送出';
+    $('#devNoteList').innerHTML = (dev.notes || []).map((n) => `<li>${esc(n)}</li>`).join('');
     $('#devCancel').hidden = !busy;
     $('#devRequest').disabled = busy;
     if (dev.request && (busy || dev.phase === 'awaiting') && !$('#devRequest').value) $('#devRequest').value = dev.request;
@@ -699,6 +724,8 @@
     const x = await guard(() => api.devStart({ request, planner: $('#devPlanner').value, implementer: $('#devImpl').value, reviewer: $('#devReviewer').value }));
     if (x) { dev = x; renderDev(); }
   });
+  $('#devNoteSend').addEventListener('click', () => sendNote('#devNoteInput'));
+  $('#devNoteInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendNote('#devNoteInput'); });
   $('#devCancel').addEventListener('click', async () => { if (confirm('確定取消這次改版？')) await guard(() => api.devCancel()); });
   $('#rollbackBtn').addEventListener('click', async () => {
     if (!api.rollback) return;
@@ -719,6 +746,44 @@
     ov.textContent = '重新啟動逾時，請關掉視窗再從捷徑開啟。';
   });
 
+  // ================= 企劃追問 =================
+  let pendingAsk = state.pendingAsk || null;
+  function renderAskBanners() {
+    $$('.askbanner-slot').forEach((slot) => {
+      slot.innerHTML = pendingAsk ? `<button class="askbanner">${esc(pendingAsk.agentName)} 有 ${pendingAsk.questions.length} 個問題等你回答 ▸</button>` : '';
+      const b = slot.querySelector('button');
+      if (b) b.addEventListener('click', () => openAsk(pendingAsk));
+    });
+  }
+  function openAsk(ask) {
+    if (!ask) return;
+    modalView = { kind: 'ask' };
+    openModal(`${ask.agentName} 想先確認幾件事`, '回答越具體，做出來的東西越接近你要的；不想回答可以跳過');
+    $('#modalBody').innerHTML = ask.questions.map((q, i) => `<div class="askq" data-i="${i}">
+        <div class="q">${i + 1}. ${esc(q.q)}</div>
+        ${q.options && q.options.length ? `<div class="opts">${q.options.map((o) => `<button type="button" data-opt="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
+        <input placeholder="${q.options && q.options.length ? '其他／補充說明（可不填）' : '你的回答'}" data-extra />
+      </div>`).join('') + `<div class="askfoot"><button class="primary" id="askSubmit">送出回答</button><button class="ghost" id="askSkip">跳過，直接開始</button></div>`;
+    $$('#modalBody .opts button').forEach((b) => b.addEventListener('click', () => {
+      const on = !b.classList.contains('on');
+      b.parentElement.querySelectorAll('button').forEach((x) => x.classList.remove('on'));
+      if (on) b.classList.add('on');
+    }));
+    const submit = async (skip) => {
+      const answers = skip ? null : ask.questions.map((q, i) => {
+        const box = $(`#modalBody .askq[data-i="${i}"]`);
+        const sel = box.querySelector('.opts button.on');
+        const extra = box.querySelector('[data-extra]').value.trim();
+        return { q: q.q, a: [sel ? sel.dataset.opt : '', extra].filter(Boolean).join('；') };
+      });
+      if (answers && answers.every((a) => !a.a)) { toast('至少回答一題，或按「跳過」', true); return; }
+      const r = await guard(() => api.answerAsk(ask.source, answers));
+      if (r !== null) { pendingAsk = null; renderAskBanners(); closeModal(); }
+    };
+    $('#askSubmit').addEventListener('click', () => submit(false));
+    $('#askSkip').addEventListener('click', () => submit(true));
+  }
+
   function renderAll() {
     renderTask();
     renderAgents();
@@ -734,4 +799,6 @@
   if (api.isPreview) logEntry('system', null, '瀏覽器預覽模式：使用模擬 AI。要串接真的 AI，請用 npm start 以 Electron 執行。');
   checkUpdate(false);
   loadUsage(false);
+  renderAskBanners();
+  if (pendingAsk) openAsk(pendingAsk);
 })();

@@ -45,6 +45,8 @@ function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
       running: orchestrator.isRunning(),
       tasks: board.snapshot(),
       devops: devops.status(),
+      pendingAsk: orchestrator.pendingAsk() || devops.status().ask || null,
+      notes: orchestrator.notes(),
     };
   }
 
@@ -76,9 +78,9 @@ function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
     },
     resetConfig() { store.resetToDefaults(); return getState(); },
     saveKey({ name, value }) { store.setKey(name, value); return getState(); },
-    async startRun({ workflowId, task }) {
+    async startRun({ workflowId, task, clarify }) {
       if (devops.isBusy()) throw new Error('AI Office 正在改版，請等改版完成再開始任務');
-      const result = await orchestrator.run(workflowId, task);
+      const result = await orchestrator.run(workflowId, task, { clarify: !!clarify });
       const file = store.saveRunReport(result);
       emit('report', { file, final: result.final });
       return { final: result.final, file };
@@ -91,6 +93,14 @@ function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
     upsertProject: (p) => { board.upsertProject(p); return board.snapshot(); },
     deleteProject: (id) => { board.deleteProject(id); return board.snapshot(); },
     clearDoneProjects: () => { board.clearDone(); return board.snapshot(); },
+    // 追問與追加指示（任務與改版共用）
+    answerAsk: ({ source, answers } = {}) => (source === 'devops' ? devops.answer(answers || null) : orchestrator.answer(answers || null)),
+    addNote: ({ text } = {}) => {
+      const st = devops.status();
+      if (devops.isBusy() || st.phase === 'awaiting') return { devops: devops.addNote(text) };
+      return { notes: orchestrator.addNote(text) };
+    },
+    pendingAsk: () => orchestrator.pendingAsk() || devops.status().ask || null,
     // 改版
     devStatus: () => devops.status(),
     devStart: (b) => devops.start(b || {}),

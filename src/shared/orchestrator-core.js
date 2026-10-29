@@ -39,9 +39,47 @@
 
   class StoppedError extends Error { constructor() { super('已停止'); this.stopped = true; } }
 
+  // ---------- 釐清需求（企劃先追問） ----------
+  function clarifyPrompt(task, qa) {
+    const asked = qa && qa.length
+      ? `\n已經問過並得到的回答：\n${qa.map((x) => `Q：${x.q}\nA：${x.a}`).join('\n')}\n`
+      : '';
+    return [
+      '【釐清需求】開始動工之前，請先判斷這個需求是否已經清楚到可以直接做。',
+      `需求：${task}`,
+      asked,
+      '如果有不清楚、而且會影響做法或成品的地方，請提出最多 4 個最關鍵的問題，每題盡量附上 2～4 個選項讓使用者直接選。',
+      '已經夠清楚、或剩下的細節可以合理自行決定時，questions 給空陣列。',
+      '只輸出 JSON，不要任何其他文字。格式：{"questions":[{"q":"問題","options":["選項A","選項B"]}]}',
+    ].join('\n');
+  }
+  function parseQuestions(text) {
+    const t = String(text || '');
+    const m = t.match(/\{[\s\S]*"questions"[\s\S]*\}/);
+    if (m) {
+      try {
+        const j = JSON.parse(m[0]);
+        return (j.questions || []).slice(0, 5).map((x) => (typeof x === 'string' ? { q: x, options: [] } : {
+          q: String(x.q || x.question || '').trim(),
+          options: Array.isArray(x.options) ? x.options.map(String).slice(0, 6) : [],
+        })).filter((x) => x.q);
+      } catch (_) { /* 退回逐行解析 */ }
+    }
+    return t.split('\n').map((l) => l.replace(/^\s*(?:[-*•]|\d+[.、)])\s*/, '').trim())
+      .filter((l) => /[?？]$/.test(l)).slice(0, 5).map((q) => ({ q, options: [] }));
+  }
+  function withAnswers(task, qa) {
+    if (!qa || !qa.length) return task;
+    return `${task}\n\n【需求確認（使用者的回答）】\n${qa.map((x) => `- ${x.q}\n  → ${x.a}`).join('\n')}`;
+  }
+  function withNotes(prompt, notes) {
+    if (!notes || !notes.length) return prompt;
+    return `${prompt}\n\n【使用者追加的指示（請一併遵守；若和前面的內容衝突，以這裡為準）】\n${notes.map((n) => `- ${n}`).join('\n')}`;
+  }
+
   function createOrchestrator({ getAgents, getWorkflows, runAgent }) {
     const ev = createEmitter();
-    let current = null; // { runId, controller }
+    let current = null; // { runId, controller, notes: [], ask: null }
 
     function agentById(id) {
       const a = getAgents().find((x) => x.id === id);
@@ -51,18 +89,19 @@
 
     function checkStop(ctrl) { if (ctrl.signal.aborted) throw new StoppedError(); }
 
-    async function callAgent(agent, prompt, ctrl, stateWhileRunning) {
+    async function callAgent(agent, prompt, ctrl, stateWhileRunning, quiet) {
       checkStop(ctrl);
+      prompt = withNotes(prompt, current && current.notes);
       ev.emit('agent', { id: agent.id, state: stateWhileRunning || 'working' });
       ev.emit('log', { agentId: agent.id, kind: 'prompt', text: prompt });
       try {
         const out = await runAgent(agent, prompt, {
           signal: ctrl.signal,
-          onChunk: (chunk) => ev.emit('log', { agentId: agent.id, kind: 'chunk', text: chunk }),
+          onChunk: (chunk) => { if (!quiet) ev.emit('log', { agentId: agent.id, kind: 'chunk', text: chunk }); },
         });
         checkStop(ctrl);
         const text = String(out || '').trim();
-        ev.emit('log', { agentId: agent.id, kind: 'output', text });
+        if (!quiet) ev.emit('log', { agentId: agent.id, kind: 'output', text });
         ev.emit('agent', { id: agent.id, state: 'idle' });
         return text;
       } catch (err) {
@@ -71,6 +110,36 @@
         ev.emit('log', { agentId: agent.id, kind: 'error', text: err.message || String(err) });
         throw err;
       }
+    }
+
+    function askUser(agent, questions, ctrl, runId) {
+      return new Promise((resolve, reject) => {
+        const onAbort = () => { if (current) current.ask = null; reject(new StoppedError()); };
+        ctrl.signal.addEventListener('abort', onAbort, { once: true });
+        current.ask = { agentId: agent.id, questions, resolve: (a) => { ctrl.signal.removeEventListener('abort', onAbort); resolve(a); } };
+        ev.emit('agent', { id: agent.id, state: 'talking' });
+        ev.emit('say', { id: agent.id, text: `想先跟你確認 ${questions.length} 件事` });
+        ev.emit('ask', { source: 'run', runId, agentId: agent.id, agentName: agent.name, questions });
+        ev.emit('log', { agentId: agent.id, kind: 'system', text: `${agent.name} 想先確認：\n${questions.map((q, i) => `${i + 1}. ${q.q}`).join('\n')}` });
+      });
+    }
+
+    async function clarify(wf, task, ctrl, runId, agent) {
+      const qa = [];
+      for (let round = 1; round <= 2; round++) {
+        ev.emit('run', { status: 'step', runId, workflowId: wf.id, label: `${agent.name}：確認需求`, index: 0, total: 0, agentId: agent.id, clarify: true });
+        const out = await callAgent(agent, clarifyPrompt(task, qa), ctrl, 'thinking', true);
+        const questions = parseQuestions(out);
+        if (!questions.length) break;
+        const answers = await askUser(agent, questions, ctrl, runId);
+        current.ask = null;
+        ev.emit('ask-done', { source: 'run', runId });
+        if (!answers) { ev.emit('log', { agentId: null, kind: 'system', text: '你選擇跳過確認，直接開始' }); break; }
+        answers.forEach((a) => { if (a && String(a.a || '').trim()) qa.push({ q: a.q, a: String(a.a).trim() }); });
+        ev.emit('log', { agentId: null, kind: 'system', text: `你的回答：\n${answers.map((a) => `- ${a.q} → ${a.a || '（未回答）'}`).join('\n')}` });
+      }
+      if (qa.length) ev.emit('say', { id: agent.id, text: '了解，我照這個方向來做！' });
+      return withAnswers(task, qa);
     }
 
     async function runPipeline(wf, task, ctrl, runId) {
@@ -126,7 +195,7 @@
       });
     }
 
-    async function run(workflowId, task) {
+    async function run(workflowId, task, opts = {}) {
       if (current) throw new Error('已有任務進行中，請先停止或等待完成');
       const wf = getWorkflows().find((w) => w.id === workflowId);
       if (!wf) throw new Error(`找不到流程：${workflowId}`);
@@ -134,10 +203,14 @@
 
       const runId = new Date().toISOString().replace(/[:.]/g, '-');
       const controller = new AbortController();
-      current = { runId, controller };
+      current = { runId, controller, notes: [], ask: null };
       ev.emit('run', { status: 'started', runId, workflowId: wf.id, label: wf.name, task: String(task) });
       ev.emit('log', { agentId: null, kind: 'system', text: `開始「${wf.name}」：${task}` });
       try {
+        if (opts.clarify) {
+          const who = agentById(wf.type === 'meeting' ? (wf.moderator || wf.participants[0]) : wf.steps[0].agent);
+          task = await clarify(wf, task, controller, runId, who);
+        }
         const result = wf.type === 'meeting'
           ? await runMeeting(wf, task, controller, runId)
           : await runPipeline(wf, task, controller, runId);
@@ -157,7 +230,32 @@
 
     function stop() { if (current) current.controller.abort(); }
 
-    return { on: ev.on.bind(ev), off: ev.off.bind(ev), run, stop, isRunning: () => !!current };
+    // 使用者隨時追加指示：下一位成員開始工作時就會帶入
+    function addNote(text) {
+      const t = String(text || '').trim();
+      if (!t) throw new Error('請輸入要追加的指示');
+      if (!current) throw new Error('目前沒有進行中的任務');
+      current.notes.push(t);
+      ev.emit('note', { runId: current.runId, notes: current.notes.slice() });
+      ev.emit('log', { agentId: null, kind: 'system', text: `你追加了指示：${t}（下一位成員開始時生效）` });
+      return current.notes.slice();
+    }
+    // 回答企劃的問題；answers 為 null 代表跳過
+    function answer(answers) {
+      if (!current || !current.ask) throw new Error('目前沒有等待回答的問題');
+      const a = current.ask;
+      current.ask = null;
+      a.resolve(answers);
+      return true;
+    }
+    function pendingAsk() {
+      if (!current || !current.ask) return null;
+      const a = current.ask;
+      const ag = getAgents().find((x) => x.id === a.agentId);
+      return { source: 'run', runId: current.runId, agentId: a.agentId, agentName: ag ? ag.name : a.agentId, questions: a.questions };
+    }
+
+    return { on: ev.on.bind(ev), off: ev.off.bind(ev), run, stop, addNote, answer, pendingAsk, isRunning: () => !!current, notes: () => (current ? current.notes.slice() : []) };
   }
 
   function composePrompt(agent, prompt) {
@@ -165,5 +263,5 @@
     return `${head}\n${agent.systemPrompt || ''}\n\n---\n\n${prompt}`;
   }
 
-  return { createOrchestrator, composePrompt, fill, snippet };
+  return { createOrchestrator, composePrompt, fill, snippet, clarifyPrompt, parseQuestions, withAnswers, withNotes };
 });

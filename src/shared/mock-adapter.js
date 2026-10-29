@@ -30,7 +30,14 @@
   }
 
   async function run(agent, prompt, { signal, onChunk, speed = 1 } = {}) {
-    const text = `（模擬 ${agent.engine}）${pick(agent)}`;
+    let text = `（模擬 ${agent.engine}）${pick(agent)}`;
+    if (String(prompt).includes('【釐清需求】')) {
+      text = String(prompt).includes('已經問過') ? '{"questions":[]}'
+        : JSON.stringify({ questions: [
+          { q: '這個成品主要是給誰用？', options: ['只有我自己', '團隊內部', '對外客戶'] },
+          { q: '第一版希望多快完成？', options: ['今天先出雛形', '一週內', '不急，做完整'] },
+        ] });
+    }
     await sleep(600 / speed, signal);
     let out = '';
     for (const ch of text) {

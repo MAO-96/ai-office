@@ -53,6 +53,13 @@
           <button class="primary" id="runBtn">開始協作</button>
           <button id="stopBtn" disabled>停止</button>
         </div>
+        <label class="chk" style="margin-top:10px"><input type="checkbox" id="clarifyChk" checked /> 開始前讓企劃先追問、確認需求</label>
+        <div class="askbanner-slot"></div>
+        <div class="notebox" id="noteBox" hidden>
+          <label>追加指示（下一位成員開始工作時生效）</label>
+          <div class="row"><input id="noteInput" placeholder="例如：報告改成條列、預算控制在一萬內" /><button id="noteSend">送出</button></div>
+          <ul class="notes" id="noteList"></ul>
+        </div>
         <div class="result" id="resultBox" hidden>
           <div class="result-head"><strong>最終結果</strong><button class="ghost" id="openReport">開啟報告檔</button></div>
           <pre id="resultText"></pre>
@@ -124,6 +131,12 @@
           <div><label>審查</label><select id="devReviewer"></select></div>
         </div>
         <div class="row"><button class="primary" id="devStart">開始改版</button><button id="devCancel" hidden>取消</button></div>
+        <div class="askbanner-slot"></div>
+        <div class="notebox" id="devNoteBox" hidden>
+          <label id="devNoteLabel"></label>
+          <div class="row"><input id="devNoteInput" placeholder="例如：按鈕改成放在右上角" /><button id="devNoteSend">送出</button></div>
+          <ul class="notes" id="devNoteList"></ul>
+        </div>
         <div id="devSteps"></div>
         <div id="devResult"></div>
       </div>

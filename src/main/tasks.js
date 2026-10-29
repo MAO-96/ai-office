@@ -169,6 +169,7 @@ function createTaskBoard({ file, getAgents, emit }) {
       }
       cur.updatedAt = now();
     };
+    if (d.status === 'step' && d.clarify) return; // 確認需求不佔任務格
     if (d.status === 'step') {
       finishCurrent();
       let id;

@@ -7,6 +7,7 @@ const os = require('os');
 const path = require('path');
 const http = require('http');
 const { spawn } = require('child_process');
+const Core = require('../shared/orchestrator-core');
 
 const APP_ROOT = path.join(__dirname, '..', '..');
 const MAX_DIFF_CHARS = 40000;
@@ -24,12 +25,14 @@ function createDevOps({ store, board, emit, runner, userDataDir, isOrchestratorB
   let ctrl = null;
   const children = new Set();
 
-  function idle() { return { phase: 'idle', request: '', steps: [], result: null, error: null, startedAt: null, roles: null }; }
+  function idle() { return { phase: 'idle', request: '', steps: [], result: null, error: null, startedAt: null, roles: null, notes: [], ask: null, followups: 0 }; }
+  let askResolve = null;
+  let rolesRef = null;
   function snapshot() { return JSON.parse(JSON.stringify({ ...state, devDir })); }
   function push() { emit('devops', snapshot()); }
   function log(text, kind = 'system', agentId = null) { emit('log', { agentId, kind, text: `［改版］${text}` }); }
 
-  const STEP_NAMES = { prepare: '準備開發副本', plan: '撰寫規格', implement: '修改程式', test: '自動測試', fix: '修正錯誤', review: '審查修改', confirm: '等你確認發布', publish: '發布到 GitHub' };
+  const STEP_NAMES = { prepare: '準備開發副本', clarify: '確認需求', plan: '撰寫規格', implement: '修改程式', test: '自動測試', fix: '修正錯誤', review: '審查修改', confirm: '等你確認發布', publish: '發布到 GitHub' };
   function setStep(key, status, detail) {
     let s = state.steps.find((x) => x.key === key);
     if (!s) { s = { key, name: STEP_NAMES[key], status: 'todo', detail: '' }; state.steps.push(s); }
@@ -108,9 +111,10 @@ function createDevOps({ store, board, emit, runner, userDataDir, isOrchestratorB
   function checkStop() { if (ctrl && ctrl.signal.aborted) throw Object.assign(new Error('已取消改版'), { cancelled: true }); }
 
   // ---------- 呼叫 AI 成員（並驅動辦公室動畫與紀錄） ----------
-  async function callAgent(agent, prompt, { write = false } = {}) {
+  async function callAgent(agent, prompt, { write = false, quiet = false } = {}) {
     checkStop();
     emit('agent', { id: agent.id, state: write ? 'working' : 'thinking' });
+    prompt = Core.withNotes(prompt, state.notes);
     emit('log', { agentId: agent.id, kind: 'prompt', text: prompt });
     try {
       const out = await runner(agent, prompt, {
@@ -118,9 +122,9 @@ function createDevOps({ store, board, emit, runner, userDataDir, isOrchestratorB
         cwd: devDir,
         write,
         timeoutMs: 30 * 60 * 1000,
-        onChunk: (c) => emit('log', { agentId: agent.id, kind: 'chunk', text: c }),
+        onChunk: (c) => { if (!quiet) emit('log', { agentId: agent.id, kind: 'chunk', text: c }); },
       });
-      emit('log', { agentId: agent.id, kind: 'output', text: String(out).trim() });
+      if (!quiet) emit('log', { agentId: agent.id, kind: 'output', text: String(out).trim() });
       emit('agent', { id: agent.id, state: 'idle' });
       return String(out).trim();
     } catch (e) {
@@ -232,8 +236,21 @@ function createDevOps({ store, board, emit, runner, userDataDir, isOrchestratorB
     return keep.join('\n');
   }
 
+  function onPipelineError(e) {
+    const cancelled = e && e.cancelled;
+    state.phase = cancelled ? 'cancelled' : 'failed';
+    state.error = cancelled ? '已取消' : (e.message || String(e));
+    state.ask = null;
+    const cur = state.steps.find((st) => st.status === 'running' || st.status === 'waiting');
+    if (cur) setStep(cur.key, 'failed', state.error);
+    log(cancelled ? '改版已取消' : `改版失敗：${state.error}`, cancelled ? 'system' : 'error');
+    emit('run', { status: cancelled ? 'stopped' : 'failed', runId: 'dev', workflowId: '__devops', error: state.error });
+    emit('ask-done', { source: 'devops' });
+    push();
+  }
+
   async function start({ request, planner, implementer, reviewer }) {
-    if (['preparing', 'planning', 'implementing', 'testing', 'fixing', 'reviewing', 'publishing'].includes(state.phase)) throw new Error('已有改版正在進行');
+    if (['preparing', 'clarifying', 'planning', 'implementing', 'testing', 'fixing', 'reviewing', 'publishing'].includes(state.phase)) throw new Error('已有改版正在進行');
     if (isOrchestratorBusy()) throw new Error('有協作任務正在進行，請等它完成再改版');
     if (store.getSettings().mockMode) throw new Error('改版需要真的 AI 改程式碼，請先到「設定」關閉模擬模式');
     request = String(request || '').trim();
@@ -249,20 +266,12 @@ function createDevOps({ store, board, emit, runner, userDataDir, isOrchestratorB
     push();
     emit('run', { status: 'started', runId: 'dev-' + Date.now(), workflowId: '__devops', label: '改版 AI Office', task: request });
     // 背景執行，畫面透過 devops 事件看進度
-    pipeline(roles).catch((e) => {
-      const cancelled = e && e.cancelled;
-      state.phase = cancelled ? 'cancelled' : 'failed';
-      state.error = cancelled ? '已取消' : (e.message || String(e));
-      const cur = state.steps.find((s) => s.status === 'running');
-      if (cur) setStep(cur.key, 'failed', state.error);
-      log(cancelled ? '改版已取消' : `改版失敗：${state.error}`, cancelled ? 'system' : 'error');
-      emit('run', { status: cancelled ? 'stopped' : 'failed', runId: 'dev', workflowId: '__devops', error: state.error });
-      push();
-    });
+    pipeline(roles).catch(onPipelineError);
     return snapshot();
   }
 
   async function pipeline(roles) {
+    rolesRef = roles;
     // 1. 準備開發副本
     setStep('prepare', 'running');
     const br = branch();
@@ -284,7 +293,10 @@ function createDevOps({ store, board, emit, runner, userDataDir, isOrchestratorB
     setStep('prepare', 'ok', `開發副本已同步到 GitHub 最新版 v${base}`);
     checkStop();
 
-    // 2. 規格
+    // 2. 先追問，確認需求
+    await clarifyStage(roles);
+
+    // 3. 規格
     state.phase = 'planning'; setStep('plan', 'running');
     let readme = '';
     try { readme = fs.readFileSync(path.join(devDir, 'README.md'), 'utf8').slice(0, 4000); } catch (_) { /* 沒有 README */ }
@@ -296,43 +308,74 @@ function createDevOps({ store, board, emit, runner, userDataDir, isOrchestratorB
       '\n請寫出實作規格：1) 要改哪些檔案、各改什麼 2) 畫面與操作的變化 3) 驗收方式。條列、精簡，不要寫完整程式碼。',
     ].join('\n'));
     setStep('plan', 'ok', spec);
-
-    // 3. 實作
-    state.phase = 'implementing'; setStep('implement', 'running');
+    state.spec = spec;
     emit('handoff', { from: roles.planner.id, to: roles.implementer.id, label: '改版規格' });
-    const rules = [
-      '你在 AI Office 的原始碼資料夾中工作（就是目前的工作目錄），請直接修改檔案完成需求。規則：',
-      '- 只能修改這個資料夾裡的檔案，不要動 .git。',
-      '- 不可新增任何 npm 相依套件，只能用 Node.js 內建模組與瀏覽器原生 API。',
-      '- 不要修改 package.json 的 version（發布時會自動處理）。',
-      '- 畫面文字使用繁體中文，風格與現有程式一致。',
-      '- 如果改了 config/engines.json，請把其中的 _version 加一。',
-      '- 完成後條列說明改了哪些檔案、做了什麼。',
-    ].join('\n');
-    const impl = await callAgent(roles.implementer, `${rules}\n\n使用者需求：${state.request}\n\n規格：\n${spec}`, { write: true });
+    await buildAndCheck(roles, base, `使用者需求：${state.request}\n\n規格：\n${spec}`);
+  }
+
+  const RULES = [
+    '你在 AI Office 的原始碼資料夾中工作（就是目前的工作目錄），請直接修改檔案完成需求。規則：',
+    '- 只能修改這個資料夾裡的檔案，不要動 .git。',
+    '- 不可新增任何 npm 相依套件，只能用 Node.js 內建模組與瀏覽器原生 API。',
+    '- 不要修改 package.json 的 version（發布時會自動處理）。',
+    '- 畫面文字使用繁體中文，風格與現有程式一致。',
+    '- 如果改了 config/engines.json，請把其中的 _version 加一。',
+    '- 完成後條列說明改了哪些檔案、做了什麼。',
+  ].join('\n');
+
+  // 企劃先追問（最多兩輪），你的回答會併進需求
+  async function clarifyStage(roles) {
+    state.phase = 'clarifying'; setStep('clarify', 'running');
+    const qa = [];
+    for (let round = 1; round <= 2; round++) {
+      const out = await callAgent(roles.planner, `${Core.clarifyPrompt(state.request, qa)}\n\n（背景：這是對「AI Office」這個桌面工具本身的改版需求。）`, { quiet: true });
+      const questions = Core.parseQuestions(out);
+      if (!questions.length) break;
+      state.ask = { source: 'devops', agentId: roles.planner.id, agentName: roles.planner.name, questions };
+      setStep('clarify', 'waiting', `${roles.planner.name} 想先確認：\n${questions.map((q, n) => `${n + 1}. ${q.q}`).join('\n')}`);
+      emit('agent', { id: roles.planner.id, state: 'talking' });
+      emit('say', { id: roles.planner.id, text: `想先跟你確認 ${questions.length} 件事` });
+      emit('ask', state.ask);
+      const answers = await new Promise((resolve, reject) => {
+        askResolve = resolve;
+        ctrl.signal.addEventListener('abort', () => reject(Object.assign(new Error('已取消改版'), { cancelled: true })), { once: true });
+      });
+      askResolve = null;
+      state.ask = null;
+      emit('ask-done', { source: 'devops' });
+      if (!answers) { log('你選擇跳過確認，直接開始'); break; }
+      answers.forEach((a) => { if (a && String(a.a || '').trim()) qa.push({ q: a.q, a: String(a.a).trim() }); });
+      setStep('clarify', 'running');
+    }
+    state.request = Core.withAnswers(state.request, qa);
+    setStep('clarify', 'ok', qa.length ? qa.map((x) => `${x.q} → ${x.a}`).join('\n') : '需求已足夠清楚');
+  }
+
+  // 實作 → 測試（失敗修一輪）→ 差異 → 審查 → 等你確認；追加修改時也走這一段
+  async function buildAndCheck(roles, base, implPrompt) {
+    state.phase = 'implementing'; setStep('implement', 'running');
+    const impl = await callAgent(roles.implementer, `${RULES}\n\n${implPrompt}`, { write: true });
     const changed = await git(['status', '--porcelain']);
     if (!changed.out.trim()) throw new Error(`${roles.implementer.name} 沒有修改任何檔案。可能是 CLI 沒有寫入權限，或需求不夠具體。`);
     setStep('implement', 'ok', impl);
 
-    // 4. 測試（失敗就修一輪）
     state.phase = 'testing'; setStep('test', 'running');
     let tests = await runTests();
     if (!tests.ok) {
       setStep('test', 'failed', tests.output);
       state.phase = 'fixing'; setStep('fix', 'running');
-      const fix = await callAgent(roles.implementer, `${rules}\n\n剛才的修改沒有通過自動測試，請修正。測試輸出：\n${tail(tests.output, 6000)}\n\n原始需求：${state.request}`, { write: true });
+      const fix = await callAgent(roles.implementer, `${RULES}\n\n剛才的修改沒有通過自動測試，請修正。測試輸出：\n${tail(tests.output, 6000)}\n\n需求：${state.request}`, { write: true });
       setStep('fix', 'ok', fix);
       state.phase = 'testing'; setStep('test', 'running');
       tests = await runTests();
     }
     setStep('test', tests.ok ? 'ok' : 'failed', tests.output);
 
-    // 5. 差異與審查
     await git(['add', '-A']);
     const stat = (await git(['diff', '--cached', '--stat'])).out.trim();
     const diff = (await git(['diff', '--cached'], { timeoutMs: 60000 })).out;
     const files = (await git(['diff', '--cached', '--name-status'])).out.trim().split('\n').filter(Boolean);
-    state.result = { baseVersion: base, stat, files, diff: diff.length > MAX_DIFF_CHARS ? diff.slice(0, MAX_DIFF_CHARS) + '\n…（差異太長，已截斷）' : diff, tests, spec, review: '' };
+    state.result = { baseVersion: base, stat, files, diff: diff.length > MAX_DIFF_CHARS ? diff.slice(0, MAX_DIFF_CHARS) + '\n…（差異太長，已截斷）' : diff, tests, spec: state.spec || '', review: '' };
     push();
     state.phase = 'reviewing'; setStep('review', 'running');
     emit('handoff', { from: roles.implementer.id, to: roles.reviewer.id, label: '程式修改' });
@@ -357,12 +400,42 @@ function createDevOps({ store, board, emit, runner, userDataDir, isOrchestratorB
       setStep('review', 'failed', review);
     }
 
-    // 6. 等你確認
     state.phase = 'awaiting';
-    setStep('confirm', 'waiting', tests.ok ? '測試通過，等你確認後發布' : '測試沒有全部通過，不建議發布');
+    setStep('confirm', 'waiting', tests.ok ? '測試通過，等你確認後發布；也可以追加修改' : '測試沒有全部通過，不建議發布；可以追加修改指示讓工程再修');
     emit('run', { status: 'finished', runId: 'dev', workflowId: '__devops' });
-    log(`改版完成，修改了 ${files.length} 個檔案，等你在「改版」分頁確認是否發布`);
+    log(`改版完成，修改了 ${files.length} 個檔案，等你在「改版」分頁確認、或追加修改`);
     push();
+  }
+
+  // 你回答企劃的問題（null 代表跳過）
+  function answer(answers) {
+    if (!askResolve) throw new Error('目前沒有等待回答的問題');
+    askResolve(answers);
+    return snapshot();
+  }
+
+  // 隨時追加指示：進行中→下一位成員帶入；已完成待確認→工程接著改、重新測試與審查
+  function addNote(text) {
+    const t = String(text || '').trim();
+    if (!t) throw new Error('請輸入要追加的指示');
+    if (state.phase === 'awaiting') {
+      state.notes.push(t);
+      state.followups++;
+      state.error = null;
+      ctrl = new AbortController();
+      log(`你追加了修改：${t}`);
+      emit('run', { status: 'started', runId: 'dev-' + Date.now(), workflowId: '__devops', label: '改版：追加修改', task: t });
+      const base = state.result ? state.result.baseVersion : '';
+      buildAndCheck(rolesRef, base, `之前已經依需求做過一輪修改（目前工作目錄裡的變更就是），使用者看過後追加了要求，請在現有修改上繼續調整：\n${t}\n\n原始需求：${state.request}`)
+        .catch(onPipelineError);
+      push();
+      return snapshot();
+    }
+    if (!isBusy()) throw new Error('目前沒有進行中的改版');
+    state.notes.push(t);
+    log(`你追加了指示：${t}（下一位成員開始時生效）`);
+    push();
+    return snapshot();
   }
 
   async function publish({ force = false } = {}) {
@@ -415,7 +488,7 @@ function createDevOps({ store, board, emit, runner, userDataDir, isOrchestratorB
   }
 
   async function discard() {
-    if (['preparing', 'planning', 'implementing', 'testing', 'fixing', 'reviewing', 'publishing'].includes(state.phase)) throw new Error('改版進行中，請先按取消');
+    if (['preparing', 'clarifying', 'planning', 'implementing', 'testing', 'fixing', 'reviewing', 'publishing'].includes(state.phase)) throw new Error('改版進行中，請先按取消');
     if (fs.existsSync(path.join(devDir, '.git'))) {
       await git(['reset', '--hard', `origin/${branch()}`]);
       await git(['clean', '-fd']);
@@ -432,8 +505,8 @@ function createDevOps({ store, board, emit, runner, userDataDir, isOrchestratorB
     return snapshot();
   }
 
-  const isBusy = () => ['preparing', 'planning', 'implementing', 'testing', 'fixing', 'reviewing', 'publishing'].includes(state.phase);
-  return { start, publish, discard, cancel, status: snapshot, isBusy, runTests, devDir };
+  const isBusy = () => ['preparing', 'clarifying', 'planning', 'implementing', 'testing', 'fixing', 'reviewing', 'publishing'].includes(state.phase);
+  return { start, publish, discard, cancel, answer, addNote, status: snapshot, isBusy, runTests, devDir };
 }
 
 module.exports = { createDevOps, bumpPatch };

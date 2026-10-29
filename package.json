@@ -1,6 +1,6 @@
 {
   "name": "ai-office",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "避難所剖面風格的 AI 辦公室：多個 AI（Claude / Codex / Gemini / Grok）以角色身分協作任務",
   "main": "src/main/main.js",
   "scripts": {
@@ -19,6 +19,6 @@
       "repo": "MAO-96/ai-office",
       "branch": "main"
     },
-    "notes": "Gemini 用量：若已安裝 agy-hud，自動讀取它的額度紀錄"
+    "notes": "打開用量分頁時即時更新；Codex 改用官方 app-server 即時查詢；Gemini 會請 agy-hud 重新抓取額度"
   }
 }

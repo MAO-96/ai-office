@@ -180,4 +180,4 @@ function checkCommand(command) {
   });
 }
 
-module.exports = { runCli, checkCommand, buildArgs, resolveCommand };
+module.exports = { runCli, checkCommand, buildArgs, resolveCommand, spawnResolved };

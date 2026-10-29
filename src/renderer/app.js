@@ -41,7 +41,10 @@
     $$('.tabs button').forEach((b) => b.classList.toggle('active', b.dataset.tab === name));
     $$('.tab').forEach((t) => { t.hidden = t.id !== 'tab-' + name; });
   }
-  $$('.tabs button').forEach((b) => b.addEventListener('click', () => switchTab(b.dataset.tab)));
+  $$('.tabs button').forEach((b) => b.addEventListener('click', () => {
+    switchTab(b.dataset.tab);
+    if (b.dataset.tab === 'usage' && typeof loadUsage === 'function') loadUsage(true);
+  }));
 
   const engineOf = (a) => state.engines[a.engine] || { label: a.engine, color: '#999' };
   const agentName = (id) => { const a = state.agents.find((x) => x.id === id); return a ? a.name : id; };
@@ -596,7 +599,7 @@
     if (!ids.length) { $('#usageList').innerHTML = '<p class="hint">讀取中…</p>'; return; }
     $('#usageList').innerHTML = ids.map((id) => {
       const u = usage[id];
-      const src = u.source === 'unofficial' ? '非官方介面' : u.source === 'agyhud' ? 'agy-hud 紀錄' : u.mode === 'api' ? 'API 估算' : '本機紀錄';
+      const src = u.source === 'unofficial' ? '即時・非官方介面' : u.source === 'live' ? '即時查詢' : u.source === 'agyhud' ? 'agy-hud 紀錄' : u.mode === 'api' ? 'API 估算' : '本機紀錄';
       const wins = (u.windows || []).map((w) => {
         const left = Math.max(0, Math.round(100 - (w.usedPct || 0)));
         const cls = left > 50 ? '' : left > 20 ? 'mid' : 'low';
@@ -615,14 +618,21 @@
       </div>`;
     }).join('');
   }
+  let usageLoading = false;
   async function loadUsage(force) {
     if (!api.getUsage) { $('#usageList').innerHTML = '<p class="hint">這個執行方式不支援用量查詢。</p>'; return; }
+    if (usageLoading) return;
+    usageLoading = true;
+    $('#usageRefresh').disabled = true;
+    if (force) $('#usageTime').textContent = '正在向各家即時查詢…';
     try {
       usage = await api.getUsage(force);
       office.setUsage(usage);
       renderUsage();
       $('#usageTime').textContent = '更新於 ' + new Date().toLocaleTimeString('zh-TW', { hour12: false });
     } catch (e) { $('#usageList').innerHTML = `<p class="hint">讀取失敗：${esc(e.message)}</p>`; }
+    usageLoading = false;
+    $('#usageRefresh').disabled = false;
   }
   $('#usageRefresh').addEventListener('click', () => loadUsage(true));
   setInterval(() => loadUsage(false), 60000);

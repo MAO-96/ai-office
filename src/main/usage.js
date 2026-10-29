@@ -6,6 +6,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
+const { spawn } = require('child_process');
 
 const CACHE_MS = 60 * 1000;
 const day = (d = new Date()) => d.toLocaleDateString('sv-SE'); // YYYY-MM-DD（本地時間）
@@ -145,8 +146,89 @@ function createUsage({ file, store, emit }) {
     return { windows, source: 'agyhud', asOf: j.lastRefreshed ? new Date(j.lastRefreshed).toISOString() : null, plan: j.tier || null };
   }
 
+  // ---------- Codex 即時查詢（官方 app-server 介面） ----------
+  function codexLive() {
+    const { spawnResolved } = require('./adapters/cli');
+    return new Promise((resolve) => {
+      let child;
+      try { child = spawnResolved('codex', ['app-server'], { env: { ...process.env, NO_COLOR: '1' } }); } catch (_) { return resolve(null); }
+      let buf = '';
+      let done = false;
+      const finish = (v) => { if (done) return; done = true; clearTimeout(timer); try { child.kill(); } catch (_) { /* ignore */ } resolve(v); };
+      const timer = setTimeout(() => finish(null), 15000);
+      const send = (m) => { try { child.stdin.write(JSON.stringify(m) + '\n'); } catch (_) { /* ignore */ } };
+      child.on('error', () => finish(null));
+      child.on('close', () => finish(null));
+      child.stdin.on('error', () => {});
+      child.stdout.setEncoding('utf8');
+      child.stdout.on('data', (d) => {
+        buf += d;
+        let i;
+        while ((i = buf.indexOf('\n')) >= 0) {
+          const line = buf.slice(0, i).trim();
+          buf = buf.slice(i + 1);
+          if (!line) continue;
+          let msg;
+          try { msg = JSON.parse(line); } catch (_) { continue; }
+          if (msg.id === 0) {
+            send({ method: 'initialized', params: {} });
+            send({ method: 'account/rateLimits/read', id: 1 });
+          } else if (msg.id === 1 && msg.error) {
+            send({ method: 'account/rateLimits/read', id: 2, params: {} }); // 有些版本要求帶 params
+          } else if ((msg.id === 1 || msg.id === 2) && msg.result) {
+            finish(msg.result.rateLimits || msg.result.rate_limits || null);
+          } else if (msg.id === 2 && msg.error) {
+            finish(null);
+          }
+        }
+      });
+      send({ method: 'initialize', id: 0, params: { clientInfo: { name: 'ai-office', version: '1' } } });
+    });
+  }
+  function codexFromLive(rl) {
+    const toWin = (w, fallback) => {
+      if (!w) return null;
+      const used = w.usedPercent != null ? w.usedPercent : w.used_percent;
+      const mins = w.windowDurationMins || w.window_minutes || w.windowMinutes || 0;
+      let at = w.resetsAt != null ? w.resetsAt : w.resets_at;
+      const name = mins ? (mins < 600 ? `${Math.round(mins / 60)} 小時` : mins < 1500 ? '1 天' : '7 天') : fallback;
+      const resetsAt = at != null ? new Date(at > 1e12 ? at : at * 1000).toISOString() : null;
+      return { name, usedPct: pct(used), resetsAt };
+    };
+    return { windows: [toWin(rl.primary, '5 小時'), toWin(rl.secondary, '7 天')].filter(Boolean), source: 'live', asOf: new Date().toISOString() };
+  }
+
+  // ---------- Antigravity：請已安裝的 agy-hud 刷新一次額度 ----------
+  let lastAgyRefresh = 0;
+  function runNode(args, stdin, timeoutMs) {
+    return new Promise((resolve) => {
+      let child;
+      try { child = spawn(process.versions.electron ? 'node' : process.execPath, args, { windowsHide: true, stdio: ['pipe', 'ignore', 'ignore'] }); } catch (_) { return resolve(false); }
+      const t = setTimeout(() => { try { child.kill(); } catch (_) { /* ignore */ } resolve(false); }, timeoutMs);
+      child.on('error', () => { clearTimeout(t); resolve(false); });
+      child.on('close', (code) => { clearTimeout(t); resolve(code === 0); });
+      child.stdin.on('error', () => {});
+      child.stdin.end(stdin || '');
+    });
+  }
+  async function refreshAgyHud() {
+    if (Date.now() - lastAgyRefresh < 20000) return;
+    lastAgyRefresh = Date.now();
+    const roots = [
+      path.join(os.homedir(), '.gemini', 'antigravity-cli'),
+      process.env.APPDATA && path.join(process.env.APPDATA, 'antigravity-cli'),
+      process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'antigravity-cli'),
+    ].filter(Boolean);
+    const rt = roots.map((r) => path.join(r, 'agy-hud-runtime', 'runtime')).find((d) => fs.existsSync(path.join(d, 'quota.js')));
+    if (!rt) return;
+    // 先跑一次狀態列程式（它會更新登入權杖的暫存），再請它重新抓額度
+    await runNode([path.join(rt, 'bin', 'agy-hud.js')], '{}', 10000);
+    await new Promise((r) => setTimeout(r, 1500));
+    await runNode([path.join(rt, 'quota.js'), '--refresh'], '', 15000);
+  }
+
   // ---------- 彙整 ----------
-  async function refresh(engineId) {
+  async function refresh(engineId, live_ = false) {
     const engines = store.getEngines();
     const e = engines[engineId];
     if (!e || typeof e !== 'object') return null;
@@ -163,8 +245,12 @@ function createUsage({ file, store, emit }) {
     try {
       let r = null;
       if (mode === 'cli' && engineId === 'claude') r = await claudeWindows();
-      else if (mode === 'cli' && engineId === 'codex') r = codexWindows();
+      else if (mode === 'cli' && engineId === 'codex') {
+        const live = live_ ? await codexLive() : null;
+        r = live ? codexFromLive(live) : codexWindows();
+      }
       else if (mode === 'cli' && engineId === 'gemini') {
+        if (live_) await refreshAgyHud();
         r = agyHudWindows();
         if (!r) out.note = 'Google 沒有公開的額度查詢方式。可在 PowerShell 執行 agy 後輸入 /usage 查看；或自行安裝第三方工具 agy-hud，AI Office 會自動讀它的額度紀錄（說明見 README）。';
         else if (r.asOf) out.note = `資料來自 agy-hud，最後更新 ${new Date(r.asOf).toLocaleString('zh-TW', { hour12: false })}${r.plan ? `・方案：${r.plan}` : ''}。`;
@@ -183,7 +269,7 @@ function createUsage({ file, store, emit }) {
     const result = {};
     await Promise.all(ids.map(async (id) => {
       const c = cache[id];
-      result[id] = !force && c && Date.now() - c.at < CACHE_MS ? c.value : await refresh(id);
+      result[id] = !force && c && Date.now() - c.at < CACHE_MS ? c.value : await refresh(id, !!force);
     }));
     return result;
   }

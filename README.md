@@ -39,12 +39,12 @@ npm run check-cli  # 檢查本機 claude / codex / gemini 是否可用
 
 ## 剩餘用量
 
-右側「用量」分頁，以及每個角色名牌下的小條（綠＝充足、黃＝偏少、紅＝快用完）：
+每次打開右側「用量」分頁都會即時向各家查一次（Gemini 會請 agy-hud 重新抓取）；角色名牌下的小條（綠＝充足、黃＝偏少、紅＝快用完）：
 
 | AI | 怎麼查 | 顯示內容 |
 |---|---|---|
 | Claude（CLI） | 讀 Claude Code 的登入資訊，查詢訂閱用量（非官方介面，日後可能失效） | 5 小時／7 天剩餘百分比與重置時間 |
-| Codex（CLI） | 讀 Codex 在本機的工作紀錄 | 5 小時／每週剩餘百分比與重置時間 |
+| Codex（CLI） | 即時呼叫 Codex 官方的 `codex app-server` 查詢；失敗時改讀本機工作紀錄 | 5 小時／每週剩餘百分比與重置時間 |
 | Gemini（Antigravity） | Google 未提供公開查詢方式。若你自行安裝第三方工具 [agy-hud](https://github.com/icebear0828/agy-hud)，AI Office 會讀它寫在本機的額度快取（只讀檔案，不碰你的登入資訊） | 5 小時／每週剩餘百分比（取最吃緊的模型）；沒裝 agy-hud 時只顯示今日呼叫次數 |
 | Grok（API） | 依回應的 token 數 × 單價 | 本月估計花費（美元）與 token 數 |
 

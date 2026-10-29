@@ -1,6 +1,6 @@
 {
   "name": "ai-office",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "description": "避難所剖面風格的 AI 辦公室：多個 AI（Claude / Codex / Gemini / Grok）以角色身分協作任務",
   "main": "src/main/main.js",
   "scripts": {
@@ -19,6 +19,6 @@
       "repo": "MAO-96/ai-office",
       "branch": "main"
     },
-    "notes": "額度用完、未登入時改用中文說明並附處理方式"
+    "notes": "Gemma 改用 Antigravity CLI（agy）：Google 已停止 Gemini CLI 的個人帳號登入"
   }
 }

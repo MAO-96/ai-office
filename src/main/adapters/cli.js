@@ -49,6 +49,7 @@ function searchDirs() {
       path.join(os.homedir(), '.local', 'bin'),
       process.env.APPDATA && path.join(process.env.APPDATA, 'npm'),
       process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links'),
+      process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'agy', 'bin'),
     ]);
   return [...new Set(dirs.filter(Boolean).map((d) => d.trim().replace(/[\\/]+$/, '')))].filter(Boolean);
 }
@@ -148,7 +149,7 @@ function runCli({ cli, agent, prompt, cwd, env, signal, onChunk, timeoutMs = DEF
         const detail = (msg.match(/limit:\s*\d+[^\n]*?(?:per day|per minute)?/i) || [''])[0];
         return finish(reject, new Error(`${cli.command} 的使用額度用完了（429）。${cli.quotaHint || '請稍後再試，或到該服務的帳號頁面查看方案額度。'}${detail ? `\n（${detail.slice(0, 120)}）` : ''}`));
       }
-      if (/not (?:logged|signed) in|unauthori[sz]ed|\b401\b|please (?:log ?in|sign in|authenticate)/i.test(msg)) {
+      if (/not (?:logged|signed) in|unauthori[sz]ed|\b401\b|please (?:log ?in|sign in|authenticate)|authentication required/i.test(msg)) {
         return finish(reject, new Error(`${cli.command} 尚未登入或登入已過期。請在 PowerShell 執行「${cli.command}」重新登入一次，再回來測試。`));
       }
       finish(reject, new Error(`${cli.command} 執行失敗（結束碼 ${code}）：${(msg || '沒有錯誤訊息').slice(-400)}`));

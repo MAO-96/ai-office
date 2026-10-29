@@ -1,5 +1,5 @@
 {
-  "_version": 5,
+  "_version": 6,
   "_說明": "每個引擎可同時有 cli 與 api 兩種接法，角色的 mode 決定用哪一種。cli.promptVia 為 stdin 時提示詞從標準輸入送入（跨平台最穩，Windows 也不會因換行或引號出錯）；為 arg 時把 args 裡的 {prompt} 換成提示詞。角色有填 model 時會加上 modelArgs。API 的 defaultModel 若為空，請到各家官方文件查目前模型 ID 後填入，或在角色設定直接填 model。 args 裡可放 {modelArgs} 指定模型參數插入位置，沒放就接在最後。 cli.env 可設定執行該 CLI 時額外的環境變數。",
   "claude": {
     "label": "Claude",
@@ -52,22 +52,22 @@
     "label": "Gemini",
     "color": "#4285f4",
     "cli": {
-      "command": "gemini",
+      "command": "agy",
       "args": [
-        "{modelArgs}",
         "-p",
-        "{prompt}"
+        "{prompt}",
+        "{modelArgs}",
+        "--print-timeout",
+        "10m"
       ],
       "promptVia": "arg",
       "modelArgs": [
-        "-m",
+        "--model",
         "{model}"
       ],
-      "install": "npm install -g @google/gemini-cli",
-      "env": {
-        "GEMINI_CLI_TRUST_WORKSPACE": "true"
-      },
-      "quotaHint": "若目前是用 API 金鑰登入，免費額度很少：在 PowerShell 執行 gemini，輸入 /auth 改選 Login with Google，用有訂閱的 Google 帳號登入。額度每天會重置。"
+      "install": "irm https://antigravity.google/cli/install.ps1 | iex",
+      "quotaHint": "Antigravity 的用量依你的 Google AI 方案而定，請等額度重置，或到 Google 帳號查看方案用量。",
+      "_註": "Google 已於 2026-06 停止 Gemini CLI 的個人帳號登入，改用 Antigravity CLI（agy）。"
     },
     "api": {
       "provider": "gemini",

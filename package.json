@@ -1,6 +1,6 @@
 {
   "name": "ai-office",
-  "version": "0.3.2",
+  "version": "0.4.0",
   "description": "避難所剖面風格的 AI 辦公室：多個 AI（Claude / Codex / Gemini / Grok）以角色身分協作任務",
   "main": "src/main/main.js",
   "scripts": {
@@ -19,6 +19,6 @@
       "repo": "MAO-96/ai-office",
       "branch": "main"
     },
-    "notes": "打開用量分頁時即時更新；Codex 改用官方 app-server 即時查詢；Gemini 會請 agy-hud 重新抓取額度"
+    "notes": "新增「改版」：讓辦公室成員修改 AI Office 自己的程式、自動測試、你確認後發布到 GitHub；更新前自動備份，可一鍵回復上一版"
   }
 }

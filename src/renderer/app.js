@@ -330,6 +330,7 @@
   api.onEvent((type, d) => {
     office.onEvent(type, d);
     if (type === 'update') showUpdate(d);
+    if (type === 'devops') { dev = d; renderDev(); }
     if (type === 'tasks') { tasks = d; office.setTasks(tasks); refreshModal(); }
     if (type === 'usage' && d) { usage[d.engine] = d; office.setUsage(usage); renderUsage(); }
     if (type === 'log') {
@@ -637,6 +638,87 @@
   $('#usageRefresh').addEventListener('click', () => loadUsage(true));
   setInterval(() => loadUsage(false), 60000);
 
+  // ================= 改版 =================
+  let dev = state.devops || { phase: 'idle', steps: [] };
+  const DEV_BUSY = ['preparing', 'planning', 'implementing', 'testing', 'fixing', 'reviewing', 'publishing'];
+  function fillDevSelects() {
+    const opts = (pref) => state.agents.map((a) => `<option value="${esc(a.id)}"${a.id === pref ? ' selected' : ''}>${esc(a.name)}（${esc(engineOf(a).label)}・${a.mode === 'cli' ? 'CLI' : 'API'}）</option>`).join('');
+    const pick = (sel, fallback) => { const cur = $(sel).value; return cur && state.agents.some((a) => a.id === cur) ? cur : fallback; };
+    const firstCli = (state.agents.find((a) => a.mode === 'cli' && a.engine === 'claude') || state.agents.find((a) => a.mode === 'cli') || {}).id;
+    $('#devPlanner').innerHTML = opts(pick('#devPlanner', state.agents.some((a) => a.id === 'pm') ? 'pm' : firstCli));
+    $('#devImpl').innerHTML = opts(pick('#devImpl', firstCli));
+    $('#devReviewer').innerHTML = opts(pick('#devReviewer', state.agents.some((a) => a.id === 'critic') ? 'critic' : firstCli));
+  }
+  function renderDev() {
+    if (!api.devStatus) { $('#tab-devops').innerHTML = '<p class="hint">這個執行方式不支援改版，請用桌面的 AI Office 捷徑開啟。</p>'; return; }
+    const busy = DEV_BUSY.includes(dev.phase);
+    $('#devStart').disabled = busy || dev.phase === 'awaiting';
+    $('#devCancel').hidden = !busy;
+    $('#devRequest').disabled = busy;
+    if (dev.request && (busy || dev.phase === 'awaiting') && !$('#devRequest').value) $('#devRequest').value = dev.request;
+    const icon = { ok: '✓', failed: '✗', running: '…', waiting: '?', todo: '·' };
+    $('#devSteps').innerHTML = (dev.steps || []).map((s) => `<div class="dstep ${s.status}"><span class="ic">${icon[s.status] || '·'}</span>
+      <div>${esc(s.name)}${s.detail ? `<details${s.status === 'failed' ? ' open' : ''}><summary class="hint">詳細</summary><pre>${esc(s.detail)}</pre></details>` : ''}</div></div>`).join('');
+    const r = dev.result;
+    let html = '';
+    if (dev.phase === 'failed' || dev.phase === 'cancelled') {
+      html = `<div class="dres bad"><h4>${dev.phase === 'cancelled' ? '已取消' : '改版失敗'}</h4><p>${esc(dev.error || '')}</p><div class="row"><button id="devDiscard">清除並重新開始</button></div></div>`;
+    } else if (r && (dev.phase === 'awaiting' || dev.phase === 'publishing' || dev.phase === 'published')) {
+      const vtxt = r.verdict === 'ok' ? '審查結論：可以發布' : r.verdict === 'fix' ? '審查結論：建議修正' : '審查沒有給出明確結論';
+      html = `<div class="dres ${r.tests.ok ? '' : 'bad'}">
+        <h4>${dev.phase === 'published' ? `已發布 v${esc(r.publishedVersion)} 🎉` : '改版結果'}</h4>
+        <div class="hint">以 v${esc(r.baseVersion)} 為基礎，修改 ${r.files.length} 個檔案</div>
+        <div class="${r.tests.ok ? 'verdict ok' : 'verdict fix'}">${r.tests.ok ? '✓ 自動測試全部通過' : '✗ 自動測試沒有通過'}</div>
+        <div class="verdict ${r.verdict}">${vtxt}</div>
+        <details><summary class="hint">修改了哪些檔案</summary><pre>${esc(r.stat)}</pre></details>
+        <details><summary class="hint">審查意見</summary><pre>${esc(r.review)}</pre></details>
+        <details><summary class="hint">測試輸出</summary><pre>${esc(r.tests.output)}</pre></details>
+        <details><summary class="hint">完整程式差異</summary><pre>${esc(r.diff)}</pre></details>
+        ${dev.phase === 'awaiting' ? `<div class="row">
+          <button class="primary" id="devPublish"${r.tests.ok ? '' : ' disabled'}>發布到 GitHub</button>
+          <button class="ghost" id="devDiscard">放棄這次修改</button></div>
+          ${r.tests.ok ? '' : '<p class="hint">測試沒過不能發布。可以放棄後把錯誤訊息補進需求再試一次。</p>'}` : ''}
+        ${dev.phase === 'published' ? `<div class="row"><button class="primary" id="devGoUpdate">立即更新到 v${esc(r.publishedVersion)}</button><button class="ghost" id="devDiscard">完成</button></div>` : ''}
+      </div>`;
+    }
+    $('#devResult').innerHTML = html;
+    const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+    on('devPublish', async () => {
+      if (!confirm('確定把這次修改發布到 GitHub？發布後可在右上角更新套用。')) return;
+      $('#devPublish').disabled = true;
+      $('#devPublish').textContent = '發布中…';
+      const x = await guard(() => api.devPublish({}));
+      if (x) { dev = x; renderDev(); checkUpdate(false); toast('已發布到 GitHub'); } else renderDev();
+    });
+    on('devDiscard', async () => { const x = await guard(() => api.devDiscard()); if (x) { dev = x; $('#devRequest').value = ''; renderDev(); } });
+    on('devGoUpdate', async () => { await checkUpdate(false); applyUpdate(); });
+  }
+  $('#devStart').addEventListener('click', async () => {
+    const request = $('#devRequest').value.trim();
+    if (!request) { toast('請先描述想要的改變', true); return; }
+    const x = await guard(() => api.devStart({ request, planner: $('#devPlanner').value, implementer: $('#devImpl').value, reviewer: $('#devReviewer').value }));
+    if (x) { dev = x; renderDev(); }
+  });
+  $('#devCancel').addEventListener('click', async () => { if (confirm('確定取消這次改版？')) await guard(() => api.devCancel()); });
+  $('#rollbackBtn').addEventListener('click', async () => {
+    if (!api.rollback) return;
+    const list = await guard(() => api.listBackups());
+    if (!list) return;
+    if (!list.length) { toast('還沒有備份，更新過一次之後才會有', true); return; }
+    if (!confirm(`回復到 v${list[0].version}？AI Office 會自動重新啟動。`)) return;
+    const ov = document.createElement('div');
+    ov.className = 'overlay';
+    ov.textContent = `正在回復到 v${list[0].version}…`;
+    document.body.appendChild(ov);
+    const r = await guard(() => api.rollback());
+    if (!r) { ov.remove(); return; }
+    for (let i = 0; i < 60; i++) {
+      await new Promise((res) => setTimeout(res, 700));
+      try { const st = await api.getState(); if (st.version === r.version) { location.reload(); return; } } catch (_) { /* 重啟中 */ }
+    }
+    ov.textContent = '重新啟動逾時，請關掉視窗再從捷徑開啟。';
+  });
+
   function renderAll() {
     renderTask();
     renderAgents();
@@ -644,6 +726,8 @@
     renderSettings();
     renderLogFilter();
     renderVersion();
+    fillDevSelects();
+    renderDev();
   }
   renderAll();
   setRunning(!!state.running);

@@ -6,6 +6,8 @@ const path = require('path');
 const zlib = require('zlib');
 
 const ROOT = path.join(__dirname, '..', '..');
+const BACKUP_DIR = path.join(os.homedir(), '.ai-office', 'backups');
+const KEEP_BACKUPS = 3;
 
 function readPkg(dir = ROOT) {
   return JSON.parse(fs.readFileSync(path.join(dir, 'package.json'), 'utf8'));
@@ -120,6 +122,7 @@ async function apply() {
     for (const must of ['package.json', 'src/server/server.js', 'src/renderer/index.html', 'config/agents.json']) {
       if (!fs.existsSync(path.join(dir, must))) throw new Error(`下載的版本不完整（缺少 ${must}），已取消更新`);
     }
+    backupCurrent();
     const files = copyTree(dir, ROOT);
     return { updated: true, files, ...info, current: readPkg().version };
   } finally {
@@ -127,4 +130,38 @@ async function apply() {
   }
 }
 
-module.exports = { check, apply, cmpVersion, parseTar };
+// ---------- 備份與回復 ----------
+function backupCurrent() {
+  const ver = readPkg().version;
+  const dst = path.join(BACKUP_DIR, `v${ver}-${Date.now()}`);
+  fs.mkdirSync(dst, { recursive: true });
+  copyTree(ROOT, dst);
+  // 只保留最近幾份
+  const all = listBackups();
+  all.slice(KEEP_BACKUPS).forEach((b) => fs.rmSync(b.dir, { recursive: true, force: true }));
+  return dst;
+}
+function listBackups() {
+  if (!fs.existsSync(BACKUP_DIR)) return [];
+  return fs.readdirSync(BACKUP_DIR)
+    .map((name) => {
+      const dir = path.join(BACKUP_DIR, name);
+      let version = '?';
+      try { version = readPkg(dir).version; } catch (_) { return null; }
+      return { name, dir, version, at: fs.statSync(dir).mtimeMs };
+    })
+    .filter(Boolean)
+    .sort((a, b) => b.at - a.at);
+}
+function rollback() {
+  const b = listBackups()[0];
+  if (!b) throw new Error('沒有可以回復的備份（更新過一次之後才會有）');
+  for (const must of ['package.json', 'src/server/server.js']) {
+    if (!fs.existsSync(path.join(b.dir, must))) throw new Error('備份不完整，無法回復');
+  }
+  copyTree(b.dir, ROOT);
+  fs.rmSync(b.dir, { recursive: true, force: true });
+  return { version: b.version };
+}
+
+module.exports = { check, apply, cmpVersion, parseTar, listBackups, rollback, backupCurrent };

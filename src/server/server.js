@@ -124,6 +124,20 @@ const API = {
   deleteProject: (b) => svc.deleteProject(b && b.id),
   clearDoneProjects: () => svc.clearDoneProjects(),
   getUsage: (b) => svc.getUsage(b && b.force),
+  devStatus: () => svc.devStatus(),
+  devStart: (b) => svc.devStart(b),
+  devPublish: (b) => svc.devPublish(b),
+  devDiscard: () => svc.devDiscard(),
+  devCancel: () => svc.devCancel(),
+  listBackups: () => updater.listBackups(),
+  rollback: async () => {
+    if (svc.orchestrator.isRunning()) throw new Error('有任務正在進行，請先停止');
+    const r = updater.rollback();
+    log(`已回復到 v${r.version}，重新啟動中`);
+    emit('updated', { version: r.version });
+    setTimeout(restart, 300);
+    return r;
+  },
   checkCli: () => svc.checkCli(),
   openWorkspace: () => svc.openWorkspace(),
   openFile: (b) => svc.openFile(b && b.file),
@@ -213,5 +227,5 @@ server.listen(PORT, HOST, () => {
   log(`設定與金鑰存放在：${USER_DIR}`);
   if (!process.argv.includes('--no-open') && !RESTARTED) openWindow(url);
   // 啟動時順便在背景檢查一次更新，結果推給畫面
-  setTimeout(() => updater.check().then((r) => { if (r.available) emit('update', r); }).catch((e) => log('檢查更新失敗：', e.message)), 3000);
+  if (!process.env.AI_OFFICE_NO_UPDATE_CHECK) setTimeout(() => updater.check().then((r) => { if (r.available) emit('update', r); }).catch((e) => log('檢查更新失敗：', e.message)), 3000);
 });

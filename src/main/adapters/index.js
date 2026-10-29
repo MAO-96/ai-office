@@ -22,7 +22,7 @@ function createRunner(store, { forceReal = false, usage = null } = {}) {
 }
 
 function makeInner(store, forceReal) {
-  return async function runAgent(agent, prompt, { signal, onChunk, onUsage } = {}) {
+  return async function runAgent(agent, prompt, { signal, onChunk, onUsage, cwd, write, timeoutMs } = {}) {
     const settings = store.getSettings();
     if (settings.mockMode && !forceReal) return MockAdapter.run(agent, prompt, { signal, onChunk });
 
@@ -34,11 +34,12 @@ function makeInner(store, forceReal) {
         cli: engine.cli,
         agent,
         prompt: composePrompt(agent, prompt),
-        cwd: store.getWorkspace(),
+        cwd: cwd || store.getWorkspace(),
         env: engine.cli && engine.cli.env,
         signal,
         onChunk,
-        timeoutMs: (settings.timeoutMinutes || 10) * 60 * 1000,
+        write: !!write,
+        timeoutMs: timeoutMs || (settings.timeoutMinutes || 10) * 60 * 1000,
       });
     }
     const api = engine.api;

@@ -7,6 +7,7 @@ const { checkCommand } = require('./adapters/cli');
 const { createOrchestrator } = require('../shared/orchestrator-core');
 const { createTaskBoard } = require('./tasks');
 const { createUsage } = require('./usage');
+const { createDevOps } = require('./devops');
 
 function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
   const store = createStore({ userDataDir, defaultsDir, crypto });
@@ -25,6 +26,11 @@ function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
     }
   });
   const realRunner = createRunner(store, { forceReal: true, usage });
+  const devops = createDevOps({
+    store, board, emit, runner: realRunner, userDataDir,
+    isOrchestratorBusy: () => orchestrator.isRunning(),
+    remoteOverride: process.env.AI_OFFICE_DEV_REMOTE || null,
+  });
   const testRunner = (agent, prompt, opts) => realRunner(agent, prompt, opts);
 
   function getState() {
@@ -38,6 +44,7 @@ function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
       keys: store.keyStatus(),
       running: orchestrator.isRunning(),
       tasks: board.snapshot(),
+      devops: devops.status(),
     };
   }
 
@@ -70,6 +77,7 @@ function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
     resetConfig() { store.resetToDefaults(); return getState(); },
     saveKey({ name, value }) { store.setKey(name, value); return getState(); },
     async startRun({ workflowId, task }) {
+      if (devops.isBusy()) throw new Error('AI Office 正在改版，請等改版完成再開始任務');
       const result = await orchestrator.run(workflowId, task);
       const file = store.saveRunReport(result);
       emit('report', { file, final: result.final });
@@ -83,6 +91,12 @@ function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
     upsertProject: (p) => { board.upsertProject(p); return board.snapshot(); },
     deleteProject: (id) => { board.deleteProject(id); return board.snapshot(); },
     clearDoneProjects: () => { board.clearDone(); return board.snapshot(); },
+    // 改版
+    devStatus: () => devops.status(),
+    devStart: (b) => devops.start(b || {}),
+    devPublish: (b) => devops.publish(b || {}),
+    devDiscard: () => devops.discard(),
+    devCancel: () => devops.cancel(),
     // 用量
     getUsage: (force) => usage.getAll(!!force),
     // 單獨測試一個角色能否連上（不受模擬模式影響）

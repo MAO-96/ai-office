@@ -7,16 +7,21 @@ const { spawn, spawnSync } = require('child_process');
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const isWin = process.platform === 'win32';
 
-function buildArgs(cli, agent, prompt) {
+function buildArgs(cli, agent, prompt, { write = false } = {}) {
   const model = (agent.model || '').trim();
   const modelArgs = model ? (cli.modelArgs || []).map((a) => a.replace('{model}', model)) : [];
+  // 只有「改版」流程會開啟寫入權限（例如 Claude 的 acceptEdits、Codex 的 workspace-write）
+  const writeArgs = write ? (cli.writeArgs || []) : [];
   const out = [];
-  let placed = false;
+  let placedModel = false;
+  let placedWrite = false;
   for (const a of cli.args || []) {
-    if (a === '{modelArgs}') { out.push(...modelArgs); placed = true; continue; }
+    if (a === '{modelArgs}') { out.push(...modelArgs); placedModel = true; continue; }
+    if (a === '{writeArgs}') { out.push(...writeArgs); placedWrite = true; continue; }
     out.push(cli.promptVia === 'arg' ? a.replace('{prompt}', prompt) : a);
   }
-  if (!placed) out.push(...modelArgs);
+  if (!placedModel) out.push(...modelArgs);
+  if (!placedWrite) out.push(...writeArgs);
   return out;
 }
 
@@ -113,10 +118,10 @@ function notInstalledMsg(cli) {
   return `這台電腦找不到「${cli.command}」，還沒安裝。${how}`;
 }
 
-function runCli({ cli, agent, prompt, cwd, env, signal, onChunk, timeoutMs = DEFAULT_TIMEOUT_MS }) {
+function runCli({ cli, agent, prompt, cwd, env, signal, onChunk, timeoutMs = DEFAULT_TIMEOUT_MS, write = false }) {
   return new Promise((resolve, reject) => {
     if (!cli) return reject(new Error(`${agent.engine} 沒有 CLI 接法，請改用 API 模式`));
-    const args = buildArgs(cli, agent, prompt);
+    const args = buildArgs(cli, agent, prompt, { write });
 
     let child;
     try {

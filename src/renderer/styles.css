@@ -57,7 +57,7 @@ canvas#office { display: block; image-rendering: pixelated; }
 
 /* 側邊面板 */
 .panel { background: var(--panel); border-left: 3px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
-.tabs { display: grid; grid-template-columns: repeat(5, 1fr); border-bottom: 3px solid var(--line); }
+.tabs { display: grid; grid-template-columns: repeat(6, 1fr); border-bottom: 3px solid var(--line); }
 .tabs button { background: none; border: 0; padding: 10px 0; color: var(--muted); cursor: pointer; font-weight: 700; border-bottom: 3px solid transparent; margin-bottom: -3px; }
 .tabs button.active { color: var(--accent); border-bottom-color: var(--accent); }
 .tab { padding: 14px 16px; overflow: auto; flex: 1; }
@@ -162,3 +162,16 @@ button.ghost { background: none; }
 .ucard .stat { font-size: 12px; color: var(--muted); margin-top: 6px; }
 .modal-back[hidden] { display: none; }
 [hidden] { display: none !important; }
+
+/* ---------- 改版 ---------- */
+.grid3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0 8px; }
+.dstep { display: grid; grid-template-columns: 22px 1fr; gap: 6px; padding: 6px 0; border-bottom: 1px solid var(--line); }
+.dstep .ic { font-weight: 800; }
+.dstep.ok .ic { color: var(--ok); } .dstep.failed .ic { color: var(--danger); } .dstep.running .ic, .dstep.waiting .ic { color: var(--accent); }
+.dstep details summary { cursor: pointer; }
+.dstep pre, .dres pre { white-space: pre-wrap; word-break: break-word; font-size: 12px; max-height: 260px; overflow: auto; background: var(--bg); padding: 8px; margin: 6px 0 0; border: 1px solid var(--line); font-family: var(--mono); }
+.dres { margin-top: 12px; border: 2px solid var(--accent); padding: 10px; }
+.dres.bad { border-color: var(--danger); }
+.dres h4 { margin: 0 0 6px; }
+.verdict { font-weight: 800; }
+.verdict.ok { color: var(--ok); } .verdict.fix { color: var(--danger); }

@@ -38,6 +38,7 @@
         <button data-tab="agents">角色</button>
         <button data-tab="usage">用量</button>
         <button data-tab="flows">流程</button>
+        <button data-tab="devops">改版</button>
         <button data-tab="settings">設定</button>
       </nav>
 
@@ -113,6 +114,20 @@
         </div>
       </div>
 
+      <div class="tab" id="tab-devops" hidden>
+        <p class="hint">讓辦公室成員直接修改 AI Office 自己的程式。AI 會在另一份開發副本上修改並自動測試，<b>你確認後</b>才會發布到 GitHub，之後按右上角更新即可。</p>
+        <label>想要 AI Office 新增或修改什麼？</label>
+        <textarea id="devRequest" rows="5" placeholder="例如：在白板的任務卡上顯示截止日期，並可以在新增任務時設定"></textarea>
+        <div class="grid3">
+          <div><label>企劃（寫規格）</label><select id="devPlanner"></select></div>
+          <div><label>工程（改程式）</label><select id="devImpl"></select></div>
+          <div><label>審查</label><select id="devReviewer"></select></div>
+        </div>
+        <div class="row"><button class="primary" id="devStart">開始改版</button><button id="devCancel" hidden>取消</button></div>
+        <div id="devSteps"></div>
+        <div id="devResult"></div>
+      </div>
+
       <div class="tab" id="tab-settings" hidden>
         <label class="switch"><input type="checkbox" id="mockToggle" /> 模擬模式（不呼叫真的 AI，先看動畫與流程）</label>
         <label>工作目錄（CLI 角色在這裡讀寫檔案，報告存在 runs/）</label>
@@ -127,7 +142,7 @@
         <ul class="cli-result" id="cliResult"></ul>
         <h4>版本與更新</h4>
         <p class="hint" id="versionInfo"></p>
-        <div class="row"><button id="checkUpdate">檢查更新</button><button class="primary" id="applyUpdate" hidden>立即更新</button></div>
+        <div class="row"><button id="checkUpdate">檢查更新</button><button class="primary" id="applyUpdate" hidden>立即更新</button><button class="ghost" id="rollbackBtn">回復上一版</button></div>
         <p class="hint" id="updateNotes"></p>
         <h4>其他</h4>
         <button class="danger" id="resetCfg">還原預設角色與流程</button>

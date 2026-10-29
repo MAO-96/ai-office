@@ -2,7 +2,7 @@
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { spawn } = require('child_process');
+const { spawn, spawnSync } = require('child_process');
 
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const isWin = process.platform === 'win32';
@@ -26,12 +26,37 @@ function buildArgs(cli, agent, prompt) {
  *  - npm 安裝的 .cmd 外殼 → 解析出背後的 .js，用 node 直接執行
  *  - 其他 → 退回用 shell 執行
  */
+// 從登錄檔讀最新的 PATH（剛安裝的程式會改登錄檔，但已開著的程式拿到的還是舊 PATH）
+function expandEnv(str) {
+  return str.replace(/%([^%]+)%/g, (m, k) => {
+    const hit = Object.keys(process.env).find((x) => x.toLowerCase() === k.toLowerCase());
+    return hit ? process.env[hit] : m;
+  });
+}
+function registryPath(key) {
+  try {
+    const r = spawnSync('reg', ['query', key, '/v', 'Path'], { encoding: 'utf8', windowsHide: true, timeout: 5000 });
+    const m = (r.stdout || '').match(/Path\s+REG_(?:EXPAND_)?SZ\s+(.*)/i);
+    return m ? expandEnv(m[1].trim()).split(';') : [];
+  } catch (_) { return []; }
+}
+function searchDirs() {
+  const dirs = []
+    .concat((process.env.PATH || '').split(';'))
+    .concat(registryPath('HKCU\\Environment'))
+    .concat(registryPath('HKLM\\SYSTEM\\CurrentControlSet\\Control\\Session Manager\\Environment'))
+    .concat([
+      path.join(os.homedir(), '.local', 'bin'),
+      process.env.APPDATA && path.join(process.env.APPDATA, 'npm'),
+      process.env.LOCALAPPDATA && path.join(process.env.LOCALAPPDATA, 'Microsoft', 'WinGet', 'Links'),
+    ]);
+  return [...new Set(dirs.filter(Boolean).map((d) => d.trim().replace(/[\\/]+$/, '')))].filter(Boolean);
+}
+
 function resolveCommand(command) {
   if (!isWin) return { file: command, prefix: [], shell: false };
   const exts = (process.env.PATHEXT || '.EXE;.CMD;.BAT').toLowerCase().split(';').filter(Boolean);
-  const dirs = (process.env.PATH || '').split(';').filter(Boolean);
-  dirs.push(path.join(os.homedir(), '.local', 'bin'));
-  if (process.env.APPDATA) dirs.push(path.join(process.env.APPDATA, 'npm'));
+  const dirs = searchDirs();
   const hasExt = path.extname(command) !== '';
   for (const dir of dirs) {
     for (const ext of hasExt ? [''] : exts) {
@@ -55,7 +80,7 @@ function resolveCommand(command) {
       }
     }
   }
-  return { file: command, prefix: [], shell: true };
+  return { notFound: true };
 }
 
 // 退回 shell 時才需要：把參數加上引號
@@ -64,12 +89,27 @@ function quoteForCmd(arg) {
   return '"' + String(arg).replace(/\r?\n/g, ' ').replace(/"/g, '\\"') + '"';
 }
 
+class NotFoundError extends Error {}
+
+// CLI 輸出是 UTF-8，但中文 Windows 系統訊息是 Big5；先試 UTF-8，失敗再用 Big5
+function decode(buf) {
+  try { return new TextDecoder('utf-8', { fatal: true }).decode(buf); } catch (_) { /* 非 UTF-8 */ }
+  if (isWin) { try { return new TextDecoder('big5').decode(buf); } catch (_) { /* 沒有 big5 支援 */ } }
+  return buf.toString('utf8');
+}
+
 function spawnResolved(command, args, opts) {
   const r = resolveCommand(command);
+  if (r.notFound) throw new NotFoundError(command);
   let finalArgs = r.prefix.concat(args);
   if (r.shell) finalArgs = finalArgs.map(quoteForCmd);
   const file = r.shell && r.file.includes(' ') ? `"${r.file}"` : r.file;
   return spawn(file, finalArgs, { ...opts, shell: r.shell, windowsHide: true });
+}
+
+function notInstalledMsg(cli) {
+  const how = cli.install ? `\n請開 PowerShell 執行：${cli.install}\n裝好後執行一次「${cli.command}」完成登入，再回來重新測試。` : '';
+  return `這台電腦找不到「${cli.command}」，還沒安裝。${how}`;
 }
 
 function runCli({ cli, agent, prompt, cwd, env, signal, onChunk, timeoutMs = DEFAULT_TIMEOUT_MS }) {
@@ -81,11 +121,12 @@ function runCli({ cli, agent, prompt, cwd, env, signal, onChunk, timeoutMs = DEF
     try {
       child = spawnResolved(cli.command, args, { cwd, env: { ...process.env, NO_COLOR: '1', ...env } });
     } catch (e) {
+      if (e instanceof NotFoundError) return reject(new Error(notInstalledMsg(cli)));
       return reject(new Error(`無法啟動 ${cli.command}：${e.message}`));
     }
 
     let stdout = '';
-    let stderr = '';
+    const errBufs = [];
     let settled = false;
     const finish = (fn, val) => { if (!settled) { settled = true; clearTimeout(timer); fn(val); } };
     const kill = () => { try { child.kill(); } catch (_) { /* ignore */ } };
@@ -94,20 +135,16 @@ function runCli({ cli, agent, prompt, cwd, env, signal, onChunk, timeoutMs = DEF
     if (signal) signal.addEventListener('abort', () => { kill(); finish(reject, new Error('aborted')); }, { once: true });
 
     child.stdout.setEncoding('utf8');
-    child.stderr.setEncoding('utf8');
     child.stdout.on('data', (d) => { stdout += d; if (onChunk) onChunk(d); });
-    child.stderr.on('data', (d) => { stderr += d; });
+    child.stderr.on('data', (d) => { errBufs.push(d); });
     child.on('error', (e) => {
-      const hint = e.code === 'ENOENT' ? `找不到指令「${cli.command}」，請確認已安裝；剛裝好的話請關掉 AI Office 再重開` : e.message;
+      const hint = e.code === 'ENOENT' ? notInstalledMsg(cli) : e.message;
       finish(reject, new Error(hint));
     });
     child.on('close', (code) => {
       if (code === 0) return finish(resolve, stdout);
-      const msg = (stderr || stdout).trim().slice(-800);
-      const notFound = isWin && /is not recognized|不是內部或外部命令/.test(msg);
-      finish(reject, new Error(notFound
-        ? `找不到指令「${cli.command}」，請確認已安裝；剛裝好的話請關掉 AI Office 再重開`
-        : `${cli.command} 結束碼 ${code}：${msg}`));
+      const msg = (decode(Buffer.concat(errBufs)) || stdout).trim().slice(-800);
+      finish(reject, new Error(`${cli.command} 執行失敗（結束碼 ${code}）：${msg || '沒有錯誤訊息'}`));
     });
     child.stdin.on('error', () => { /* 程式提早結束時忽略 */ });
 
@@ -122,7 +159,7 @@ function checkCommand(command) {
     let child;
     try {
       child = spawnResolved(command, ['--version'], {});
-    } catch (e) { return resolve({ ok: false, detail: e.message }); }
+    } catch (e) { return resolve({ ok: false, detail: e instanceof NotFoundError ? '未安裝' : e.message }); }
     const t = setTimeout(() => { try { child.kill(); } catch (_) { /* ignore */ } resolve({ ok: false, detail: '逾時' }); }, 20000);
     child.stdout.on('data', (d) => { out += d; });
     child.stderr.on('data', (d) => { out += d; });

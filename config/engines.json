@@ -1,5 +1,5 @@
 {
-  "_version": 2,
+  "_version": 3,
   "_說明": "每個引擎可同時有 cli 與 api 兩種接法，角色的 mode 決定用哪一種。cli.promptVia 為 stdin 時提示詞從標準輸入送入（跨平台最穩，Windows 也不會因換行或引號出錯）；為 arg 時把 args 裡的 {prompt} 換成提示詞。角色有填 model 時會加上 modelArgs。API 的 defaultModel 若為空，請到各家官方文件查目前模型 ID 後填入，或在角色設定直接填 model。 args 裡可放 {modelArgs} 指定模型參數插入位置，沒放就接在最後。",
   "claude": {
     "label": "Claude",
@@ -13,7 +13,8 @@
       "modelArgs": [
         "--model",
         "{model}"
-      ]
+      ],
+      "install": "irm https://claude.ai/install.ps1 | iex"
     },
     "api": {
       "provider": "anthropic",
@@ -36,7 +37,8 @@
       "modelArgs": [
         "-m",
         "{model}"
-      ]
+      ],
+      "install": "npm install -g @openai/codex"
     },
     "api": {
       "provider": "openai",
@@ -58,7 +60,8 @@
       "modelArgs": [
         "-m",
         "{model}"
-      ]
+      ],
+      "install": "npm install -g @google/gemini-cli"
     },
     "api": {
       "provider": "gemini",

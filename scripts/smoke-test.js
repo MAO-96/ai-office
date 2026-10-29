@@ -55,7 +55,7 @@ const ROOT = path.join(__dirname, '..');
     const out = await runCli({ cli: { command: 'cat', args: [], promptVia: 'stdin' }, agent: { engine: 'fake', name: 'T' }, prompt: '你好\n第二行', cwd: tmp });
     assert.strictEqual(out, '你好\n第二行');
     await runCli({ cli: { command: 'not-a-real-cli-xyz', args: [] }, agent: { engine: 'fake' }, prompt: 'x', cwd: tmp })
-      .then(() => assert.fail(), (e) => assert.match(e.message, /找不到指令/));
+      .then(() => assert.fail(), (e) => assert.match(e.message, /找不到「not-a-real-cli-xyz」/));
     console.log('✓ CLI 轉接器（stdin 傳遞、找不到指令提示）');
   }
   const args = buildArgs(store.getEngines().codex.cli, { model: 'm1' }, 'p');

@@ -1,5 +1,5 @@
 {
-  "_version": 4,
+  "_version": 5,
   "_說明": "每個引擎可同時有 cli 與 api 兩種接法，角色的 mode 決定用哪一種。cli.promptVia 為 stdin 時提示詞從標準輸入送入（跨平台最穩，Windows 也不會因換行或引號出錯）；為 arg 時把 args 裡的 {prompt} 換成提示詞。角色有填 model 時會加上 modelArgs。API 的 defaultModel 若為空，請到各家官方文件查目前模型 ID 後填入，或在角色設定直接填 model。 args 裡可放 {modelArgs} 指定模型參數插入位置，沒放就接在最後。 cli.env 可設定執行該 CLI 時額外的環境變數。",
   "claude": {
     "label": "Claude",
@@ -14,7 +14,8 @@
         "--model",
         "{model}"
       ],
-      "install": "irm https://claude.ai/install.ps1 | iex"
+      "install": "irm https://claude.ai/install.ps1 | iex",
+      "quotaHint": "Claude 方案用量有時間窗限制，請等額度重置後再試。"
     },
     "api": {
       "provider": "anthropic",
@@ -38,7 +39,8 @@
         "-m",
         "{model}"
       ],
-      "install": "npm install -g @openai/codex"
+      "install": "npm install -g @openai/codex",
+      "quotaHint": "ChatGPT 方案的 Codex 用量有時間窗限制，請等額度重置，或到 ChatGPT 設定查看用量。"
     },
     "api": {
       "provider": "openai",
@@ -64,7 +66,8 @@
       "install": "npm install -g @google/gemini-cli",
       "env": {
         "GEMINI_CLI_TRUST_WORKSPACE": "true"
-      }
+      },
+      "quotaHint": "若目前是用 API 金鑰登入，免費額度很少：在 PowerShell 執行 gemini，輸入 /auth 改選 Login with Google，用有訂閱的 Google 帳號登入。額度每天會重置。"
     },
     "api": {
       "provider": "gemini",

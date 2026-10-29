@@ -144,7 +144,14 @@ function runCli({ cli, agent, prompt, cwd, env, signal, onChunk, timeoutMs = DEF
     child.on('close', (code) => {
       if (code === 0) return finish(resolve, stdout);
       const msg = (decode(Buffer.concat(errBufs)) || stdout).trim().slice(-800);
-      finish(reject, new Error(`${cli.command} 執行失敗（結束碼 ${code}）：${msg || '沒有錯誤訊息'}`));
+      if (/\b429\b|quota|rate.?limit|exceeded your current|usage limit/i.test(msg)) {
+        const detail = (msg.match(/limit:\s*\d+[^\n]*?(?:per day|per minute)?/i) || [''])[0];
+        return finish(reject, new Error(`${cli.command} 的使用額度用完了（429）。${cli.quotaHint || '請稍後再試，或到該服務的帳號頁面查看方案額度。'}${detail ? `\n（${detail.slice(0, 120)}）` : ''}`));
+      }
+      if (/not (?:logged|signed) in|unauthori[sz]ed|\b401\b|please (?:log ?in|sign in|authenticate)/i.test(msg)) {
+        return finish(reject, new Error(`${cli.command} 尚未登入或登入已過期。請在 PowerShell 執行「${cli.command}」重新登入一次，再回來測試。`));
+      }
+      finish(reject, new Error(`${cli.command} 執行失敗（結束碼 ${code}）：${(msg || '沒有錯誤訊息').slice(-400)}`));
     });
     child.stdin.on('error', () => { /* 程式提早結束時忽略 */ });
 

@@ -1,0 +1,79 @@
+{
+  "_version": 2,
+  "_說明": "每個引擎可同時有 cli 與 api 兩種接法，角色的 mode 決定用哪一種。cli.promptVia 為 stdin 時提示詞從標準輸入送入（跨平台最穩，Windows 也不會因換行或引號出錯）；為 arg 時把 args 裡的 {prompt} 換成提示詞。角色有填 model 時會加上 modelArgs。API 的 defaultModel 若為空，請到各家官方文件查目前模型 ID 後填入，或在角色設定直接填 model。 args 裡可放 {modelArgs} 指定模型參數插入位置，沒放就接在最後。",
+  "claude": {
+    "label": "Claude",
+    "color": "#d97757",
+    "cli": {
+      "command": "claude",
+      "args": [
+        "-p"
+      ],
+      "promptVia": "stdin",
+      "modelArgs": [
+        "--model",
+        "{model}"
+      ]
+    },
+    "api": {
+      "provider": "anthropic",
+      "defaultModel": "claude-sonnet-5-5",
+      "keyEnv": "ANTHROPIC_API_KEY"
+    }
+  },
+  "codex": {
+    "label": "Codex",
+    "color": "#10a37f",
+    "cli": {
+      "command": "codex",
+      "args": [
+        "exec",
+        "--skip-git-repo-check",
+        "{modelArgs}",
+        "-"
+      ],
+      "promptVia": "stdin",
+      "modelArgs": [
+        "-m",
+        "{model}"
+      ]
+    },
+    "api": {
+      "provider": "openai",
+      "defaultModel": "",
+      "keyEnv": "OPENAI_API_KEY"
+    }
+  },
+  "gemini": {
+    "label": "Gemini",
+    "color": "#4285f4",
+    "cli": {
+      "command": "gemini",
+      "args": [
+        "{modelArgs}",
+        "-p",
+        "{prompt}"
+      ],
+      "promptVia": "arg",
+      "modelArgs": [
+        "-m",
+        "{model}"
+      ]
+    },
+    "api": {
+      "provider": "gemini",
+      "defaultModel": "",
+      "keyEnv": "GEMINI_API_KEY"
+    }
+  },
+  "grok": {
+    "label": "Grok",
+    "color": "#9aa0a6",
+    "cli": null,
+    "api": {
+      "provider": "xai",
+      "defaultModel": "grok-4.5",
+      "keyEnv": "XAI_API_KEY"
+    }
+  }
+}

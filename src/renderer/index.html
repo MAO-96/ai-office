@@ -1,0 +1,138 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="utf-8" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'" />
+  <title>AI 辦公室</title>
+  <link rel="stylesheet" href="styles.css" />
+  <link rel="icon" href="../../docs/icon.png" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="logo">▣</span> AI 辦公室</div>
+    <div class="run-status" id="runStatus"><span class="dot"></span><span id="runLabel">待命中</span></div>
+    <div class="progress"><div class="bar" id="runBar"></div></div>
+    <div class="badges">
+      <button class="update-btn" id="updateBtn" hidden></button>
+      <span class="badge" id="modeBadge">模擬模式</span>
+    </div>
+  </header>
+
+  <main class="layout">
+    <section class="stage">
+      <div class="canvas-wrap"><canvas id="office"></canvas></div>
+      <div class="log">
+        <div class="log-head">
+          <strong>工作紀錄</strong>
+          <select id="logFilter"><option value="">全部角色</option></select>
+          <label class="chk"><input type="checkbox" id="logPrompts" /> 顯示提示詞</label>
+          <button class="ghost" id="logClear">清除</button>
+        </div>
+        <div class="log-body" id="logBody"></div>
+      </div>
+    </section>
+
+    <aside class="panel">
+      <nav class="tabs">
+        <button data-tab="task" class="active">任務</button>
+        <button data-tab="agents">角色</button>
+        <button data-tab="flows">流程</button>
+        <button data-tab="settings">設定</button>
+      </nav>
+
+      <div class="tab" id="tab-task">
+        <label>協作流程</label>
+        <select id="wfSelect"></select>
+        <p class="hint" id="wfDesc"></p>
+        <div class="chain" id="wfChain"></div>
+        <label>任務內容</label>
+        <textarea id="taskInput" rows="6" placeholder="例如：幫我規劃一個個人記帳 App 的 MVP，並寫出核心資料結構"></textarea>
+        <div class="row">
+          <button class="primary" id="runBtn">開始協作</button>
+          <button id="stopBtn" disabled>停止</button>
+        </div>
+        <div class="result" id="resultBox" hidden>
+          <div class="result-head"><strong>最終結果</strong><button class="ghost" id="openReport">開啟報告檔</button></div>
+          <pre id="resultText"></pre>
+        </div>
+      </div>
+
+      <div class="tab" id="tab-agents" hidden>
+        <div class="row" style="margin:0 0 10px"><button id="testAll">測試全部角色連線</button><span class="hint" id="testAllHint"></span></div>
+        <div class="agent-list" id="agentList"></div>
+        <button id="addAgent">＋ 新增角色</button>
+        <form class="agent-form" id="agentForm" hidden>
+          <div class="form-head">
+            <canvas id="agentPreview" width="60" height="72"></canvas>
+            <div>
+              <label>ID（英數）</label><input name="id" required />
+            </div>
+          </div>
+          <div class="grid2">
+            <div><label>名字</label><input name="name" required /></div>
+            <div><label>職稱</label><input name="title" /></div>
+            <div><label>AI 引擎</label><select name="engine"></select></div>
+            <div><label>串接方式</label><select name="mode"><option value="cli">CLI</option><option value="api">API</option></select></div>
+            <div><label>模型（可留空）</label><input name="model" placeholder="使用預設" /></div>
+            <div><label>所屬房間</label><select name="room"></select></div>
+          </div>
+          <label>外觀</label>
+          <div class="colors">
+            <span>膚色<input type="color" name="skin" /></span>
+            <span>髮色<input type="color" name="hair" /></span>
+            <span>上衣<input type="color" name="shirt" /></span>
+            <span>褲子<input type="color" name="pants" /></span>
+          </div>
+          <label>角色設定（系統提示詞）</label>
+          <textarea name="systemPrompt" rows="6"></textarea>
+          <p class="hint" id="modeHint"></p>
+          <div class="row">
+            <button class="primary" type="submit">儲存角色</button>
+            <button type="button" id="testAgent">測試連線</button>
+            <button type="button" id="deleteAgent" class="danger">刪除</button>
+            <button type="button" id="cancelAgent" class="ghost">取消</button>
+          </div>
+        </form>
+      </div>
+
+      <div class="tab" id="tab-flows" hidden>
+        <p class="hint">流程分兩種：<b>pipeline</b>（固定管線，依序交棒）與 <b>meeting</b>（會議討論，輪流發言再由主持人總結）。提示詞可用 {task}、{prev}、{step1}…、{transcript}、{round}。</p>
+        <div id="flowCards"></div>
+        <label>進階：直接編輯流程 JSON</label>
+        <textarea id="flowJson" rows="16" spellcheck="false" class="mono"></textarea>
+        <div class="row">
+          <button class="primary" id="saveFlows">儲存流程</button>
+          <button class="ghost" id="revertFlows">還原</button>
+        </div>
+      </div>
+
+      <div class="tab" id="tab-settings" hidden>
+        <label class="switch"><input type="checkbox" id="mockToggle" /> 模擬模式（不呼叫真的 AI，先看動畫與流程）</label>
+        <label>工作目錄（CLI 角色在這裡讀寫檔案，報告存在 runs/）</label>
+        <div class="row"><input id="wsPath" readonly /><button id="wsChoose">選擇</button><button class="ghost" id="wsOpen">開啟</button></div>
+        <label>單一步驟逾時（分鐘）</label>
+        <input id="timeoutInput" type="number" min="1" max="120" />
+        <h4>API 金鑰</h4>
+        <p class="hint">優先讀環境變數；在這裡填的只存在你的電腦（桌面視窗版會額外加密）。</p>
+        <div id="keyList"></div>
+        <h4>CLI 檢查</h4>
+        <button id="cliCheck">檢查已安裝的 CLI</button>
+        <ul class="cli-result" id="cliResult"></ul>
+        <h4>版本與更新</h4>
+        <p class="hint" id="versionInfo"></p>
+        <div class="row"><button id="checkUpdate">檢查更新</button><button class="primary" id="applyUpdate" hidden>立即更新</button></div>
+        <p class="hint" id="updateNotes"></p>
+        <h4>其他</h4>
+        <button class="danger" id="resetCfg">還原預設角色與流程</button>
+      </div>
+    </aside>
+  </main>
+
+  <script src="../shared/orchestrator-core.js"></script>
+  <script src="../shared/mock-adapter.js"></script>
+  <script src="bridge-http.js"></script>
+  <script src="bridge-preview.js"></script>
+  <script src="office.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

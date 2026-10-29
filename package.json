@@ -1,0 +1,24 @@
+{
+  "name": "ai-office",
+  "version": "0.2.0",
+  "description": "避難所剖面風格的 AI 辦公室：多個 AI（Claude / Codex / Gemini / Grok）以角色身分協作任務",
+  "main": "src/main/main.js",
+  "scripts": {
+    "start": "node src/server/server.js",
+    "electron": "electron .",
+    "dev": "electron . --dev",
+    "test": "node scripts/smoke-test.js",
+    "check-cli": "node scripts/check-cli.js"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "electron": "^39.0.0"
+  },
+  "aiOffice": {
+    "update": {
+      "repo": "MAO-96/ai-office",
+      "branch": "main"
+    },
+    "notes": "內建自動更新、測試連線按鈕、Windows CLI 相容性修正"
+  }
+}

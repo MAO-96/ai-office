@@ -3,23 +3,80 @@
     "id": "feature-pipeline",
     "name": "功能開發管線",
     "type": "pipeline",
-    "description": "企劃寫規格 → 工程實作 → 審查找問題 → 工程修正",
+    "description": "企劃寫規格 → 工程實作 → 審查官質疑、工程與企劃回應修訂，反覆討論到共識",
     "steps": [
-      { "agent": "pm", "label": "撰寫規格", "prompt": "任務：{task}\n\n請產出：1) 目標 2) 功能規格 3) 驗收條件 4) 實作步驟。" },
-      { "agent": "dev", "label": "實作", "prompt": "任務：{task}\n\n以下是企劃的規格：\n{prev}\n\n請依規格實作。" },
-      { "agent": "critic", "label": "審查", "prompt": "任務：{task}\n\n規格：\n{step1}\n\n工程師的實作：\n{prev}\n\n請審查並列出問題與修正建議。" },
-      { "agent": "dev", "label": "修正", "prompt": "任務：{task}\n\n你先前的實作：\n{step2}\n\n審查意見：\n{prev}\n\n請依審查意見修正，並說明改了什麼。" }
+      {
+        "agent": "pm",
+        "label": "撰寫規格",
+        "prompt": "任務：{task}\n\n請產出：1) 目標 2) 功能規格 3) 驗收條件 4) 實作步驟。"
+      },
+      {
+        "agent": "dev",
+        "label": "實作",
+        "prompt": "任務：{task}\n\n以下是企劃的規格：\n{prev}\n\n請依規格實作。"
+      },
+      {
+        "type": "review",
+        "agent": "critic",
+        "label": "審查討論",
+        "with": [
+          "dev",
+          "pm"
+        ],
+        "maxRounds": 3
+      }
     ]
   },
   {
     "id": "research-pipeline",
     "name": "研究報告管線",
     "type": "pipeline",
-    "description": "研究員蒐集整理 → 企劃收斂成建議 → 審查挑錯",
+    "description": "研究員蒐集整理 → 企劃收斂 → 審查官挑戰盲點，與企劃、研究員討論到共識",
     "steps": [
-      { "agent": "designer", "label": "研究", "prompt": "研究主題：{task}\n\n請整理重點、可選方案與各自取捨。" },
-      { "agent": "pm", "label": "收斂", "prompt": "主題：{task}\n\n研究結果：\n{prev}\n\n請收斂成一份可執行的建議與下一步。" },
-      { "agent": "critic", "label": "審查", "prompt": "主題：{task}\n\n建議：\n{prev}\n\n請挑出盲點與風險。" }
+      {
+        "agent": "designer",
+        "label": "研究",
+        "prompt": "研究主題：{task}\n\n請整理重點、可選方案與各自取捨。"
+      },
+      {
+        "agent": "pm",
+        "label": "收斂",
+        "prompt": "主題：{task}\n\n研究結果：\n{prev}\n\n請收斂成一份可執行的建議與下一步。"
+      },
+      {
+        "type": "review",
+        "agent": "critic",
+        "label": "審查討論",
+        "with": [
+          "pm",
+          "designer"
+        ],
+        "maxRounds": 3
+      }
+    ]
+  },
+  {
+    "id": "debate",
+    "name": "方案辯論",
+    "type": "pipeline",
+    "description": "工程先提方案 → 審查官質疑，工程、企劃、研究員一起討論到最佳結果",
+    "steps": [
+      {
+        "agent": "dev",
+        "label": "提出方案",
+        "prompt": "題目：{task}\n\n請提出你建議的方案，含理由、取捨與風險。"
+      },
+      {
+        "type": "review",
+        "agent": "critic",
+        "label": "審查討論",
+        "with": [
+          "dev",
+          "pm",
+          "designer"
+        ],
+        "maxRounds": 4
+      }
     ]
   },
   {
@@ -27,7 +84,12 @@
     "name": "全員腦力激盪會議",
     "type": "meeting",
     "description": "所有人到會議室輪流發言兩輪，最後由主持人整理結論",
-    "participants": ["pm", "dev", "designer", "critic"],
+    "participants": [
+      "pm",
+      "dev",
+      "designer",
+      "critic"
+    ],
     "moderator": "pm",
     "rounds": 2,
     "turnPrompt": "會議議題：{task}\n\n目前的討論紀錄：\n{transcript}\n\n輪到你發言（第 {round} 輪）。以你的職責角度回應前面的人，提出新觀點，150 字內。",

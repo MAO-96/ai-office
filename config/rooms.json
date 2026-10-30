@@ -1,10 +1,45 @@
 {
-  "_說明": "樓層由上往下排列；每層最多兩間房。meeting 是會議討論時大家集合的房間。",
+  "_version": 2,
+  "_說明": "開放式辦公室：所有人坐同一間，部門是分組（各有一塊牆上白板）。desks 是至少要擺幾張桌子，人數多時會自動加桌並保留 2 張空位給新進員工。",
+  "departments": [
+    {
+      "id": "planning",
+      "name": "企劃"
+    },
+    {
+      "id": "research",
+      "name": "研究"
+    },
+    {
+      "id": "dev",
+      "name": "開發"
+    },
+    {
+      "id": "review",
+      "name": "審查"
+    }
+  ],
   "floors": [
-    [ { "id": "planning", "name": "企劃室", "wall": "#3d5a73", "desks": 2 },
-      { "id": "research", "name": "研究室", "wall": "#4f6b4a", "desks": 2 } ],
-    [ { "id": "dev", "name": "開發室", "wall": "#5a4a73", "desks": 3 },
-      { "id": "review", "name": "審查室", "wall": "#734a4a", "desks": 2 } ],
-    [ { "id": "meeting", "name": "會議室", "wall": "#6b5f3d", "desks": 0, "wide": true } ]
+    [
+      {
+        "id": "office",
+        "name": "開放辦公室",
+        "wall": "#3d5a73",
+        "desks": 6,
+        "wide": true
+      }
+    ],
+    [
+      {
+        "id": "meeting",
+        "name": "會議室",
+        "wall": "#6b5f3d"
+      },
+      {
+        "id": "lounge",
+        "name": "茶水間",
+        "wall": "#4f6b4a"
+      }
+    ]
   ]
 }

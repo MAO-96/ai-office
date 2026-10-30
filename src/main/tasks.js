@@ -127,10 +127,24 @@ function createTaskBoard({ file, getAgents, emit }) {
   // ---------- 流程執行時自動追蹤 ----------
   const runs = {}; // runId -> { projectId, type, current, meetingTurns }
   function onRunEvent(d, workflow) {
+    // 例行清單的單項：直接更新那一格任務，不另開專案
+    if (d.status === 'started' && d.meta && d.meta.boardTaskId) {
+      runs[d.runId] = { linked: d.meta.boardTaskId };
+      const t = data.tasks.find((x) => x.id === d.meta.boardTaskId);
+      if (t) { t.status = 'doing'; t.progress = Math.max(t.progress || 0, 10); t.updatedAt = now(); touchProject(t.projectId); save(); }
+      return;
+    }
+    if (runs[d.runId] && runs[d.runId].linked) {
+      const t = data.tasks.find((x) => x.id === runs[d.runId].linked);
+      if (t && d.status === 'finished') { t.status = 'done'; t.progress = 100; t.note = ''; }
+      if (t && (d.status === 'failed' || d.status === 'stopped')) { t.status = 'blocked'; t.note = d.status === 'stopped' ? '已手動停止' : String(d.error || '執行失敗').slice(0, 300); }
+      if (t && ['finished', 'failed', 'stopped'].includes(d.status)) { t.updatedAt = now(); touchProject(t.projectId); delete runs[d.runId]; save(); }
+      return;
+    }
     if (d.status === 'started' && workflow) {
       const proj = {
-        id: 'run-' + d.runId, title: String(d.task || workflow.name).slice(0, 80), source: 'workflow',
-        workflow: workflow.name, status: 'doing', createdAt: now(), updatedAt: now(),
+        id: 'run-' + d.runId, title: String(d.title || d.task || workflow.name).slice(0, 80), source: workflow.type === 'single' ? 'quick' : 'workflow',
+        workflow: workflow.name || '交辦', runId: d.runId, status: 'doing', createdAt: now(), updatedAt: now(),
       };
       data.projects.unshift(proj);
       const r = runs[d.runId] = { projectId: proj.id, type: workflow.type, current: null, rounds: workflow.rounds || 1 };
@@ -144,9 +158,16 @@ function createTaskBoard({ file, getAgents, emit }) {
           id: `${proj.id}-sum`, projectId: proj.id, title: '整理會議結論', agentId: workflow.moderator, room: agentRoom(workflow.moderator),
           status: 'todo', progress: 0, note: '', order: people.length, updatedAt: now(),
         });
+      } else if (workflow.type === 'single') {
+        data.tasks.push({
+          id: `${proj.id}-s0`, projectId: proj.id, title: String(d.title || d.task).slice(0, 60), agentId: workflow.agent, room: agentRoom(workflow.agent),
+          status: 'todo', progress: 0, note: '', order: 0, updatedAt: now(),
+        });
       } else {
-        (workflow.steps || []).forEach((s, i) => data.tasks.push({
-          id: `${proj.id}-s${i}`, projectId: proj.id, title: s.label, agentId: s.agent, room: agentRoom(s.agent),
+        (workflow.steps || []).forEach((st, i) => data.tasks.push({
+          id: `${proj.id}-s${i}`, projectId: proj.id,
+          title: st.type === 'review' ? `${st.label}（最多 ${st.maxRounds || 3} 輪）` : st.label,
+          agentId: st.agent, room: agentRoom(st.agent),
           status: 'todo', progress: 0, note: '', order: i, updatedAt: now(),
         }));
       }
@@ -170,6 +191,17 @@ function createTaskBoard({ file, getAgents, emit }) {
       cur.updatedAt = now();
     };
     if (d.status === 'step' && d.clarify) return; // 確認需求不佔任務格
+    if (d.status === 'substep') {
+      // 審查討論：依輪數推進度，並寫上目前在做什麼
+      const t = data.tasks.find((x) => x.id === `${r.projectId}-s${d.stepIndex}`);
+      if (t) {
+        t.progress = Math.min(95, Math.round(((d.round - 1) / (d.maxRounds || 3)) * 100) + 10);
+        t.note = d.label;
+        t.updatedAt = now();
+        save();
+      }
+      return;
+    }
     if (d.status === 'step') {
       finishCurrent();
       let id;
@@ -189,7 +221,10 @@ function createTaskBoard({ file, getAgents, emit }) {
       save();
     } else if (d.status === 'finished') {
       finishCurrent();
-      data.tasks.filter((t) => t.projectId === r.projectId).forEach((t) => { t.status = 'done'; t.progress = 100; });
+      data.tasks.filter((t) => t.projectId === r.projectId).forEach((t) => {
+        t.status = 'done'; t.progress = 100;
+        if (t.title.startsWith('審查討論')) t.note = d.consensus === false ? '討論後仍有分歧，已由審查官裁決' : d.consensus ? '已達成共識' : '';
+      });
       touchProject(r.projectId);
       delete runs[d.runId];
       save();
@@ -206,7 +241,24 @@ function createTaskBoard({ file, getAgents, emit }) {
     }
   }
 
-  return { snapshot, upsertProject, deleteProject, upsertTask, deleteTask, clearDone, onRunEvent };
+  // 例行清單：產生一個當天的專案與各項任務
+  function createChecklist(title, items) {
+    const proj = { id: uid('p'), title, source: 'routine', status: 'todo', createdAt: now(), updatedAt: now() };
+    data.projects.unshift(proj);
+    const tasks = items.map((it, i) => {
+      const t = {
+        id: uid('t'), projectId: proj.id, title: String(it.title).slice(0, 80), agentId: it.agentId || null,
+        room: agentRoom(it.agentId) || 'planning', status: 'todo', progress: 0, note: '', order: i, updatedAt: now(),
+      };
+      data.tasks.push(t);
+      return t;
+    });
+    prune();
+    save();
+    return { project: proj, tasks };
+  }
+
+  return { snapshot, upsertProject, deleteProject, upsertTask, deleteTask, clearDone, onRunEvent, createChecklist };
 }
 
 module.exports = { createTaskBoard };

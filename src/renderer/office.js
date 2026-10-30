@@ -79,6 +79,24 @@
     R(4 + e, 5, 1, 1, shade(L.skin, -45));
   }
 
+  // ---------- 閒暇互動台詞（預寫，不呼叫 AI） ----------
+  const CHATS = [
+    ['早安！咖啡機修好了嗎？', '修好了，第一杯超香', '我等等也去裝一杯'],
+    ['昨天那個任務順利嗎？', '還不錯，審查只挑了兩個問題', 'Rex 今天手下留情欸'],
+    ['午餐要吃什麼？', '便當吧，懶得出門', '好，幫我也訂一個'],
+    ['我發現一個好用的快捷鍵', '快教我！', 'Ctrl+Shift+P，什麼都找得到'],
+    ['最近額度還夠用嗎？', '省著點用 😅', '我改用短一點的提示詞了'],
+    ['週末有什麼計畫？', '打算在家追劇', '聽起來很棒'],
+    ['這個辦公室越來越熱鬧了', '對啊，還有空位等新同事', ''],
+    ['你那個 bug 修好了嗎？', '剛修好，原來少一個逗號', '經典'],
+    ['審查官今天心情好嗎？', '還是很愛挑毛病', '但挑得都有道理…'],
+    ['下午要不要一起對一下進度？', '好啊，三點會議室', ''],
+  ];
+  const COFFEE = ['☕ 補充咖啡因', '來杯拿鐵', '餅乾又被吃光了…', '今天的咖啡有點苦', '（倒杯水）'];
+  const MUTTER = ['（伸懶腰）', '嗯…', '（整理桌面）', '（喝口水）', '今天進度不錯'];
+  const STROLL = ['（看一下白板）', '（澆一下盆栽）', '（印個資料）', '（活動一下筋骨）'];
+  const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+
   // ---------- 辦公室 ----------
   class Office {
     constructor(canvas, state, opts) {
@@ -88,6 +106,7 @@
       this.rt = new Map();
       this.time = 0;
       this.running = false;
+      this.runs = [];
       this.selected = null;
       this.hover = null;
       this.setState(state);
@@ -118,15 +137,18 @@
       const shaftX = G.margin;
       const roomsX = shaftX + G.shaftW + G.gap;
       let maxX = roomsX;
+      const nAgents = this.state.agents.length;
       floors.forEach((rooms, f) => {
         const y = G.surface + f * G.floorH;
         let x = roomsX;
         rooms.forEach((r) => {
           const w = r.wide ? G.roomW * 2 + G.gap : G.roomW;
           const h = G.floorH - G.gap;
-          const n = r.desks || 0;
+          // 辦公室：至少保留 2 張空桌給新進員工
+          const n = r.id === 'office' ? Math.max(r.desks || 0, nAgents + 2) : (r.desks || 0);
           const desks = [];
-          for (let i = 0; i < n; i++) desks.push(Math.round(x + 110 + i * ((w - 150) / Math.max(1, n))));
+          const left = x + 120, right = x + w - 70;
+          for (let i = 0; i < n; i++) desks.push(Math.round(n === 1 ? (left + right) / 2 : left + i * ((right - left) / (n - 1))));
           this.rooms[r.id] = Object.assign({}, r, { x, y, w, h, floor: f, feet: y + h - G.floorStrip, desks });
           x += w + G.gap;
         });
@@ -138,52 +160,61 @@
       const rnd = seeded(42);
       this.rocks = [];
       for (let i = 0; i < 420; i++) this.rocks.push({ x: rnd() * this.worldW, y: G.surface + rnd() * (this.worldH - G.surface), s: 2 + Math.floor(rnd() * 3), l: rnd() > 0.5 });
-      this.carY = this.rooms[Object.keys(this.rooms)[0]].feet;
+      this.office = this.rooms.office || Object.values(this.rooms).find((r) => r.desks.length) || Object.values(this.rooms)[0];
+      this.lounge = this.rooms.lounge || null;
+      this.depts = this.state.rooms.departments || [...new Set(this.state.agents.map((a) => a.room))].map((id) => ({ id, name: id }));
+      if (this.carY == null) this.carY = this.office.feet;
     }
 
-    homeRoom(agent) {
-      if (this.rooms[agent.room] && agent.room !== 'meeting') return this.rooms[agent.room];
-      return Object.values(this.rooms).find((r) => r.id !== 'meeting');
-    }
-
+    homeRoom() { return this.office; }
     homeX(agent) {
-      const room = this.homeRoom(agent);
-      const mates = this.state.agents.filter((a) => this.homeRoom(a) === room);
-      const i = mates.findIndex((a) => a.id === agent.id);
-      if (i < room.desks.length) return room.desks[i] - 30;
-      return room.x + 50 + (i - room.desks.length) * 46;
+      const i = this.state.agents.findIndex((a) => a.id === agent.id);
+      const d = this.office.desks;
+      if (i >= 0 && i < d.length) return d[i] - 30;
+      return this.office.x + 40 + Math.max(0, i) * 12;
     }
-
     meetingX(agent) {
       const room = this.rooms.meeting;
       const all = this.state.agents;
       const i = all.findIndex((a) => a.id === agent.id);
       const n = Math.max(2, all.length);
-      return Math.round(room.x + 120 + i * ((room.w - 240) / (n - 1)));
+      return Math.round(room.x + 70 + i * ((room.w - 140) / (n - 1)));
     }
+    roomAt(r) {
+      return Object.values(this.rooms).find((room) => Math.abs(room.feet - r.y) < 3 && r.x >= room.x - 2 && r.x <= room.x + room.w + 2) || null;
+    }
+    atDesk(r, a) { return !r.path.length && Math.abs(r.y - this.office.feet) < 2 && Math.abs(r.x - this.homeX(a)) < 3; }
+    headingHome(r, a) {
+      const last = r.path[r.path.length - 1];
+      return last && last.x === this.homeX(a) && Math.abs(last.y - this.office.feet) < 2;
+    }
+    isFree(r) { return r.state === 'idle' && !r.inMeeting && !r.activity && !r.path.length && !r.carrying; }
 
     syncAgents() {
       const ids = new Set(this.state.agents.map((a) => a.id));
       for (const id of [...this.rt.keys()]) if (!ids.has(id)) this.rt.delete(id);
       for (const a of this.state.agents) {
-        const room = this.homeRoom(a);
         let r = this.rt.get(a.id);
         if (!r) {
-          r = { id: a.id, x: this.homeX(a), y: room.feet, path: [], state: 'idle', facing: 1, phase: 0, bubble: null, carrying: false, wanderAt: Math.random() * 6, riding: false };
+          // 第一次載入直接坐好；之後新增的員工從地面入口搭電梯報到
+          const fresh = !!this.loaded;
+          r = {
+            id: a.id, x: fresh ? this.shaft.cx : this.homeX(a), y: fresh ? G.surface : this.office.feet,
+            path: [], state: 'idle', facing: 1, phase: 0, bubble: null, carrying: false, riding: false,
+            inMeeting: false, activity: null, partner: null, nextIdleAt: this.time + 4 + Math.random() * 10,
+          };
           this.rt.set(a.id, r);
-        } else if (!this.running && r.path.length === 0) {
-          this.goTo(a.id, room.id, this.homeX(a));
+          if (fresh) {
+            this.goTo(a.id, this.office.id, this.homeX(a), [{ wait: 0.2, start: () => { r.bubble = { text: '大家好，我是新來的！請多指教', until: this.time + 4 }; } }]);
+          }
+        } else if (!r.path.length && !r.inMeeting && !r.activity && !this.atDesk(r, a) && this.roomAt(r) === this.office) {
+          this.goTo(a.id, this.office.id, this.homeX(a));
         }
       }
+      this.loaded = true;
     }
 
     agent(id) { return this.state.agents.find((a) => a.id === id); }
-
-    floorOfY(y) {
-      let best = 0, d = Infinity;
-      Object.values(this.rooms).forEach((r) => { const k = Math.abs(r.feet - y); if (k < d) { d = k; best = r.floor; } });
-      return best;
-    }
 
     goTo(id, roomId, x, extra) {
       const r = this.rt.get(id);
@@ -198,57 +229,130 @@
       r.path = path.concat(extra || []);
     }
 
+    endActivity(r) {
+      if (!r.activity) return;
+      const p = r.partner && this.rt.get(r.partner);
+      r.activity = null;
+      r.partner = null;
+      if (p && p.partner === r.id) { p.activity = null; p.partner = null; }
+      r.path = [];
+      r.nextIdleAt = this.time + 6 + Math.random() * 8;
+    }
+
     // ---------- 事件 ----------
     onEvent(type, d) {
-      if (type === 'run') {
-        if (d.status === 'started') this.running = true;
-        if (d.status === 'finished' || d.status === 'failed' || d.status === 'stopped') this.running = false;
-        return;
-      }
+      if (type === 'run') return;
       const r = d && (d.id || d.from) ? this.rt.get(d.id || d.from) : null;
-      if (type === 'agent' && r) r.state = d.state;
+      if (type === 'agent' && r) {
+        r.state = d.state;
+        // 有工作就回自己座位（開會中、正在交件的不打斷）
+        if (['working', 'thinking', 'talking'].includes(d.state) && !r.inMeeting && !r.carrying) {
+          const a = this.agent(r.id);
+          this.endActivity(r);
+          if (a && !this.atDesk(r, a) && !this.headingHome(r, a)) this.goTo(r.id, this.office.id, this.homeX(a));
+        }
+      }
       if (type === 'say' && r) {
-        // 同一時間只留一個發言泡泡，避免會議時互相蓋住
-        this.rt.forEach((o) => { if (o !== r) o.bubble = null; });
-        r.bubble = { text: d.text, until: this.time + 6 };
+        // 附近的人先收起泡泡，避免互相蓋住
+        this.rt.forEach((o) => { if (o !== r && o.bubble && Math.abs(o.y - r.y) < 3 && Math.abs(o.x - r.x) < 160) o.bubble = null; });
+        r.bubble = { text: d.text, until: this.time + 6, work: true };
       }
       if (type === 'move' && r) {
         r.carrying = false;
+        this.endActivity(r);
         const a = this.agent(d.id);
-        if (d.to === 'meeting' && this.rooms.meeting) this.goTo(d.id, 'meeting', this.meetingX(a));
-        else this.goTo(d.id, this.homeRoom(a).id, this.homeX(a));
+        if (d.to === 'meeting' && this.rooms.meeting) { r.inMeeting = true; this.goTo(d.id, 'meeting', this.meetingX(a)); }
+        else { r.inMeeting = false; this.goTo(d.id, this.office.id, this.homeX(a)); }
       }
       if (type === 'handoff') {
         const from = this.agent(d.from), to = this.agent(d.to);
         const rf = this.rt.get(d.from);
-        if (!from || !to || !rf) return;
+        if (!from || !to || !rf || rf.inMeeting) return;
+        this.endActivity(rf);
         rf.carrying = true;
-        const toRoom = this.homeRoom(to);
-        const targetX = this.homeX(to) + 38;
-        const home = this.homeRoom(from);
         // 走到下一位的座位旁，停一下交件，再走回自己座位
-        this.goTo(d.from, toRoom.id, targetX, [
+        this.goTo(d.from, this.office.id, this.homeX(to) + 38, [
           { wait: 0.8, then: () => {
             rf.carrying = false;
-            rf.bubble = { text: `交給你了：${d.label}`, until: this.time + 2.5 };
+            rf.bubble = { text: `交給你了：${d.label}`, until: this.time + 2.5, work: true };
             const rt2 = this.rt.get(d.to);
-            if (rt2) rt2.bubble = { text: '收到！', until: this.time + 2.5 };
-            this.goTo(d.from, home.id, this.homeX(from));
+            if (rt2) rt2.bubble = { text: '收到！', until: this.time + 2.5, work: true };
+            this.goTo(d.from, this.office.id, this.homeX(from));
           } },
         ]);
       }
+    }
+
+    // ---------- 閒暇互動（純動畫與預寫台詞，不呼叫 AI） ----------
+    idleTick(r) {
+      if (!this.isFree(r) || this.time < (r.nextIdleAt || 0)) return;
+      r.nextIdleAt = this.time + 9 + Math.random() * 14;
+      const a = this.agent(r.id);
+      if (!a) return;
+      const roll = Math.random();
+      const chatting = [...this.rt.values()].filter((x) => x.activity === 'chat').length;
+      if (roll < 0.4 && chatting < 4 && this.startChat(r)) return;
+      if (roll < 0.62 && this.lounge) return this.startCoffee(r, a);
+      if (roll < 0.82) return this.startStroll(r, a);
+      if (!r.bubble && Math.random() < 0.35) r.bubble = { text: pick(MUTTER), until: this.time + 2.4 };
+    }
+    startChat(r) {
+      const others = [...this.rt.values()].filter((x) => x !== r && this.isFree(x));
+      if (!others.length) return false;
+      const p = others[Math.floor(Math.random() * others.length)];
+      const room = this.roomAt(p);
+      if (!room) return false;
+      const side = p.x >= r.x ? -1 : 1;
+      const tx = Math.max(room.x + 30, Math.min(room.x + room.w - 30, p.x + side * 32));
+      const [q, ans, more] = pick(CHATS);
+      r.activity = 'chat'; r.partner = p.id;
+      p.activity = 'chat'; p.partner = r.id;
+      const say = (who, text, dur) => ({ wait: dur, start: () => {
+        r.facing = p.x >= r.x ? 1 : -1;
+        p.facing = -r.facing;
+        if (text && !(who.bubble && who.bubble.work)) who.bubble = { text, until: this.time + dur - 0.2 };
+      } });
+      const steps = [say(r, q, 2.8), say(p, ans, 2.8)];
+      if (more) steps.push(say(r, more, 2.2));
+      steps.push({ wait: 0.1, then: () => {
+        if (p.partner === r.id) { p.activity = null; p.partner = null; p.nextIdleAt = this.time + 8 + Math.random() * 10; }
+        r.activity = null; r.partner = null;
+        const a = this.agent(r.id);
+        if (a) this.goTo(r.id, this.office.id, this.homeX(a));
+      } });
+      this.goTo(r.id, room.id, tx, steps);
+      return true;
+    }
+    startCoffee(r, a) {
+      const L = this.lounge;
+      r.activity = 'coffee';
+      const x = L.x + L.w - 118 + Math.round(Math.random() * 20);
+      this.goTo(r.id, L.id, x, [
+        { wait: 3.2, start: () => { r.facing = 1; if (!r.bubble) r.bubble = { text: pick(COFFEE), until: this.time + 3 }; } },
+        { wait: 0.1, then: () => { r.activity = null; this.goTo(r.id, this.office.id, this.homeX(a)); } },
+      ]);
+    }
+    startStroll(r, a) {
+      const room = this.office;
+      r.activity = 'stroll';
+      const x = Math.max(room.x + 40, Math.min(room.x + room.w - 40, this.homeX(a) + (Math.random() * 260 - 130)));
+      this.goTo(r.id, room.id, x, [
+        { wait: 2.2, start: () => { if (!r.bubble && Math.random() < 0.6) r.bubble = { text: pick(STROLL), until: this.time + 2 }; } },
+        { wait: 0.1, then: () => { r.activity = null; this.goTo(r.id, room.id, this.homeX(a)); } },
+      ]);
     }
 
     // ---------- 更新 ----------
     update(dt) {
       this.time += dt;
       let rideY = null;
-      for (const [id, r] of this.rt) {
+      for (const r of this.rt.values()) {
         r.riding = false;
         r.walking = false;
         if (r.path.length) {
           const wp = r.path[0];
           if (wp.wait !== undefined) {
+            if (!wp.started) { wp.started = true; if (wp.start) wp.start(); }
             wp.wait -= dt;
             if (wp.wait <= 0) { r.path.shift(); if (wp.then) wp.then(); }
             continue;
@@ -265,22 +369,9 @@
           }
           if (Math.abs(dx) > 0.5) { r.facing = dx > 0 ? 1 : -1; r.walking = true; r.phase += dt * 12; }
           if (wp.ride) { r.riding = true; rideY = r.y; }
-        } else if (!this.running && r.state === 'idle' && this.time > r.wanderAt) {
-          // 閒置時在自己房間小範圍走動
-          const a = this.agent(id);
-          if (a) {
-            const room = this.homeRoom(a);
-            if (Math.abs(r.y - room.feet) < 2) {
-              const hx = this.homeX(a);
-              const nx = Math.max(room.x + 30, Math.min(room.x + room.w - 30, hx + (Math.random() * 120 - 60)));
-              r.path = [{ x: nx, y: room.feet }, { wait: 1.5 + Math.random() * 2 }, { x: hx, y: room.feet }];
-            }
-          }
-          r.wanderAt = this.time + 6 + Math.random() * 10;
-        }
-        if (r.state === 'working' && !r.path.length) {
-          const a = this.agent(id);
-          if (a) r.facing = 1;
+        } else {
+          this.idleTick(r);
+          if (r.state === 'working' && !r.activity) r.facing = 1;
         }
       }
       if (rideY !== null) this.carY = rideY;
@@ -428,7 +519,7 @@
       for (let i = 0; i < lamps; i++) {
         const lx = r.x + (r.w / lamps) * (i + 0.5);
         const glow = ctx.createLinearGradient(0, r.y + 12, 0, r.feet);
-        glow.addColorStop(0, 'rgba(255,230,160,0.22)');
+        glow.addColorStop(0, 'rgba(255,230,160,0.20)');
         glow.addColorStop(1, 'rgba(255,230,160,0)');
         ctx.fillStyle = glow;
         ctx.beginPath();
@@ -452,8 +543,8 @@
       ctx.fillRect(r.x, r.feet - 70, 6, 70);
 
       this.drawDecor(ctx, r);
-      if (r.id !== 'meeting') this.drawBoard(ctx, r);
-      r.desks.forEach((dx) => this.drawDesk(ctx, r, dx));
+      if (r === this.office) this.drawDeptBoards(ctx, r);
+      r.desks.forEach((dx, i) => this.drawDesk(ctx, r, dx, i));
 
       // 名牌
       ctx.font = `bold 13px ${FONT}`;
@@ -469,68 +560,92 @@
 
     drawDecor(ctx, r) {
       const f = r.feet;
-      const right = r.x + r.w - 36;
       if (r.id === 'meeting') {
-        // 長桌 + 大螢幕
         this.drawOverview(ctx, r);
         ctx.fillStyle = '#5a3a24';
-        ctx.fillRect(r.x + 80, f - 24, r.w - 160, 7);
+        ctx.fillRect(r.x + 50, f - 24, r.w - 100, 7);
         ctx.fillStyle = '#3e2818';
-        ctx.fillRect(r.x + 96, f - 17, 6, 17);
-        ctx.fillRect(r.x + r.w - 102, f - 17, 6, 17);
+        ctx.fillRect(r.x + 66, f - 17, 6, 17);
+        ctx.fillRect(r.x + r.w - 72, f - 17, 6, 17);
         return;
       }
-      if (r.id === 'planning') {
-        // 檔案櫃
-        ctx.fillStyle = '#8a6f4a'; ctx.fillRect(right - 16, f - 58, 34, 58);
-        ctx.fillStyle = '#6e573a'; ctx.fillRect(right - 12, f - 52, 26, 22); ctx.fillRect(right - 12, f - 26, 26, 22);
-        ctx.fillStyle = '#d9c9a3'; ctx.fillRect(right - 3, f - 43, 8, 3); ctx.fillRect(right - 3, f - 17, 8, 3);
-      } else if (r.id === 'research') {
-        ctx.fillStyle = '#4a3020'; ctx.fillRect(right - 30, f - 90, 50, 90);
-        const cols = ['#c94f4f', '#4f7ac9', '#d9a43b', '#4f9a5a', '#8a5ab0'];
-        for (let row = 0; row < 3; row++) for (let i = 0; i < 6; i++) {
-          ctx.fillStyle = cols[(i + row) % cols.length];
-          ctx.fillRect(right - 26 + i * 7, f - 84 + row * 28, 5, 22);
-        }
-      } else if (r.id === 'dev') {
-        ctx.fillStyle = '#1e1e26'; ctx.fillRect(right - 14, f - 100, 36, 100);
-        for (let i = 0; i < 8; i++) {
-          ctx.fillStyle = (Math.floor(this.time * 4 + i) % 3 === 0) ? '#5cff8a' : '#2f6b44';
-          ctx.fillRect(right - 8, f - 94 + i * 11, 4, 3);
-          ctx.fillStyle = '#33333f'; ctx.fillRect(right, f - 94 + i * 11, 18, 6);
-        }
-      } else if (r.id === 'review') {
-        ctx.fillStyle = '#6e7380'; ctx.fillRect(right - 20, f - 72, 40, 72);
-        for (let i = 0; i < 3; i++) { ctx.fillStyle = '#4e525c'; ctx.fillRect(right - 16, f - 66 + i * 23, 32, 18); ctx.fillStyle = '#c9c9c9'; ctx.fillRect(right - 4, f - 59 + i * 23, 8, 3); }
+      if (r.id === 'lounge') {
+        const R = r.x + r.w;
+        // 吧台與咖啡機
+        ctx.fillStyle = '#7a5a3a'; ctx.fillRect(R - 160, f - 30, 120, 30);
+        ctx.fillStyle = '#5e4229'; ctx.fillRect(R - 160, f - 30, 120, 4);
+        ctx.fillStyle = '#2b2b33'; ctx.fillRect(R - 100, f - 58, 28, 28);
+        ctx.fillStyle = '#c94f4f'; ctx.fillRect(R - 94, f - 52, 6, 4);
+        ctx.fillStyle = (Math.floor(this.time * 2) % 2) ? '#5cff8a' : '#2f6b44'; ctx.fillRect(R - 82, f - 52, 4, 3);
+        ctx.fillStyle = '#f5f0e1'; ctx.fillRect(R - 140, f - 38, 8, 8); ctx.fillRect(R - 128, f - 38, 8, 8);
+        // 飲水機
+        ctx.fillStyle = '#9fc3e6'; ctx.fillRect(R - 30, f - 62, 16, 18);
+        ctx.fillStyle = '#d9d9d9'; ctx.fillRect(R - 32, f - 44, 20, 44);
+        // 沙發與小桌
+        ctx.fillStyle = '#8f3b4f'; ctx.fillRect(r.x + 70, f - 22, 110, 22); ctx.fillRect(r.x + 64, f - 36, 12, 36); ctx.fillRect(r.x + 174, f - 36, 12, 36);
+        ctx.fillStyle = '#a14a5f'; ctx.fillRect(r.x + 76, f - 34, 98, 12);
+        ctx.fillStyle = '#5a3a24'; ctx.fillRect(r.x + 210, f - 18, 44, 5); ctx.fillRect(r.x + 228, f - 13, 6, 13);
+        // 窗
+        ctx.fillStyle = '#20384f'; ctx.fillRect(r.x + 120, r.y + 24, 90, 44);
+        ctx.fillStyle = '#e8c27a'; ctx.fillRect(r.x + 126, r.y + 54, 78, 8);
+        ctx.fillStyle = '#16120f'; ctx.fillRect(r.x + 164, r.y + 24, 2, 44);
+        // 盆栽
+        ctx.fillStyle = '#8a4f2f'; ctx.fillRect(r.x + 18, f - 16, 16, 16);
+        ctx.fillStyle = '#4f9a5a'; ctx.fillRect(r.x + 14, f - 34, 24, 18); ctx.fillRect(r.x + 20, f - 42, 12, 8);
+        return;
       }
-      // 盆栽
+      // 辦公室：左邊盆栽、右邊影印機
       ctx.fillStyle = '#8a4f2f'; ctx.fillRect(r.x + 18, f - 16, 16, 16);
       ctx.fillStyle = '#4f9a5a'; ctx.fillRect(r.x + 14, f - 34, 24, 18); ctx.fillRect(r.x + 20, f - 42, 12, 8);
+      const R = r.x + r.w;
+      ctx.fillStyle = '#c9c9c9'; ctx.fillRect(R - 34, f - 34, 26, 34);
+      ctx.fillStyle = '#7a7a82'; ctx.fillRect(R - 34, f - 34, 26, 6);
+      ctx.fillStyle = '#f5f0e1'; ctx.fillRect(R - 28, f - 40, 14, 6);
     }
 
-    drawDesk(ctx, r, dx) {
+    drawDesk(ctx, r, dx, i) {
       const f = r.feet;
-      const user = [...this.rt.values()].find((a) => Math.abs(a.y - f) < 3 && Math.abs(a.x - (dx - 30)) < 8 && !a.path.length);
-      const working = user && (user.state === 'working' || user.state === 'thinking');
-      const ag = user && this.agent(user.id);
-      const eng = ag && this.state.engines[ag.engine];
-      // 螢幕
+      const owner = this.state.agents[i];
+      // 椅子
+      ctx.fillStyle = owner ? '#3a3a46' : '#2e2e38';
+      ctx.fillRect(dx - 44, f - 22, 14, 4);
+      ctx.fillRect(dx - 39, f - 18, 4, 18);
+      if (!owner) {
+        // 空位：預留給新進員工
+        const hov = this.hoverSpot && this.hoverSpot.kind === 'desk' && this.hoverSpot.id === i;
+        ctx.fillStyle = '#26262e'; ctx.fillRect(dx - 16, f - 52, 32, 22);
+        ctx.fillStyle = '#141820'; ctx.fillRect(dx - 13, f - 49, 26, 16);
+        ctx.fillStyle = '#26262e'; ctx.fillRect(dx - 3, f - 30, 6, 4);
+        ctx.fillStyle = hov ? '#a8774a' : '#8a5a34'; ctx.fillRect(dx - 30, f - 26, 60, 6);
+        ctx.fillStyle = '#5e3d22'; ctx.fillRect(dx - 27, f - 20, 5, 20); ctx.fillRect(dx + 22, f - 20, 5, 20);
+        ctx.fillStyle = hov ? '#ffd166' : 'rgba(243,227,195,0.75)';
+        ctx.fillRect(dx - 22, f - 70, 44, 14);
+        ctx.fillStyle = '#2a211a'; ctx.font = `bold 9px ${FONT}`; ctx.textAlign = 'center';
+        ctx.fillText(hov ? '＋新增員工' : '空位', dx, f - 60);
+        this.hot.push({ kind: 'desk', id: i, x: dx - 34, y: f - 72, w: 68, h: 72 });
+        return;
+      }
+      const rt = this.rt.get(owner.id);
+      const working = rt && this.atDesk(rt, owner) && (rt.state === 'working' || rt.state === 'thinking');
+      const eng = this.state.engines[owner.engine];
       ctx.fillStyle = '#26262e';
       ctx.fillRect(dx - 16, f - 52, 32, 22);
       ctx.fillStyle = working ? (eng ? eng.color : '#5cc0ff') : '#1b2430';
       ctx.fillRect(dx - 13, f - 49, 26, 16);
       if (working) {
         ctx.fillStyle = 'rgba(255,255,255,0.75)';
-        for (let i = 0; i < 3; i++) ctx.fillRect(dx - 10, f - 46 + i * 4, 6 + ((Math.floor(this.time * 6) + i * 5) % 14), 2);
+        for (let k = 0; k < 3; k++) ctx.fillRect(dx - 10, f - 46 + k * 4, 6 + ((Math.floor(this.time * 6) + k * 5) % 14), 2);
       }
       ctx.fillStyle = '#26262e';
       ctx.fillRect(dx - 3, f - 30, 6, 4);
-      // 桌子
       ctx.fillStyle = '#8a5a34';
       ctx.fillRect(dx - 30, f - 26, 60, 6);
       ctx.fillStyle = '#5e3d22';
       ctx.fillRect(dx - 27, f - 20, 5, 20);
       ctx.fillRect(dx + 22, f - 20, 5, 20);
+      // 桌上小名牌
+      ctx.fillStyle = owner.look && owner.look.shirt ? owner.look.shirt : '#888';
+      ctx.fillRect(dx + 8, f - 31, 16, 5);
     }
 
     drawAgent(ctx, r) {
@@ -633,11 +748,18 @@
       const progress = ts.length ? Math.round(ts.reduce((s, x) => s + (x.status === 'done' ? 100 : x.progress || 0), 0) / ts.length) : 0;
       return { ...c, total: ts.length, progress };
     }
-    drawBoard(ctx, r) {
-      const w = 132, h = 48;
-      const x = Math.round(r.x + r.w / 2 - w / 2), y = r.y + 16;
-      const st = this.roomStats(r.id);
-      const hov = this.hoverSpot && this.hoverSpot.id === r.id;
+    drawDeptBoards(ctx, r) {
+      const n = Math.max(1, this.depts.length);
+      const x0 = r.x + 150, avail = r.w - 150 - 20;
+      const bw = Math.min(128, Math.floor((avail - (n - 1) * 12) / n));
+      const total = n * bw + (n - 1) * 12;
+      let x = Math.round(x0 + (avail - total) / 2);
+      this.depts.forEach((d) => { this.drawBoard(ctx, x, r.y + 18, bw, d.id, `${d.name}白板`); x += bw + 12; });
+    }
+    drawBoard(ctx, x, y, w, id, label) {
+      const h = 46;
+      const st = this.roomStats(id);
+      const hov = this.hoverSpot && this.hoverSpot.kind === 'room' && this.hoverSpot.id === id;
       ctx.fillStyle = '#9a8566';
       ctx.fillRect(x - 3, y - 3, w + 6, h + 6);
       ctx.fillStyle = hov ? '#ffffff' : '#ece7da';
@@ -645,70 +767,70 @@
       ctx.font = `bold 10px ${FONT}`;
       ctx.textAlign = 'left';
       ctx.fillStyle = '#3a3128';
-      ctx.fillText('白板', x + 6, y + 13);
+      ctx.fillText(label, x + 6, y + 13);
       ctx.textAlign = 'right';
       ctx.fillStyle = '#7a6d5c';
       ctx.font = `9px ${FONT}`;
-      ctx.fillText(st.total ? `進度 ${st.progress}%` : '點我新增任務', x + w - 6, y + 13);
+      if (w > 110) ctx.fillText(st.total ? `${st.progress}%` : '', x + w - 6, y + 13);
       const items = [['待辦', st.todo, '#7a6d5c'], ['進行', st.doing, '#3d7fc4'], ['卡住', st.blocked, '#c9483a'], ['完成', st.done, '#3f9a52']];
       ctx.textAlign = 'center';
+      const step = (w - 12) / 4;
       items.forEach(([name, n, col], i) => {
-        const cx = x + 18 + i * 32;
+        const cx = x + 6 + step * (i + 0.5);
         ctx.fillStyle = n ? col : '#b9b0a0';
         ctx.font = `bold 12px ${FONT}`;
-        ctx.fillText(String(n), cx, y + 30);
+        ctx.fillText(String(n), cx, y + 29);
         ctx.font = `8px ${FONT}`;
-        ctx.fillText(name, cx, y + 40);
+        ctx.fillText(name, cx, y + 39);
       });
       ctx.fillStyle = '#d6cfbf';
-      ctx.fillRect(x + 6, y + h - 5, w - 12, 2);
+      ctx.fillRect(x + 6, y + h - 4, w - 12, 2);
       ctx.fillStyle = st.blocked ? '#c9483a' : '#3f9a52';
-      ctx.fillRect(x + 6, y + h - 5, (w - 12) * st.progress / 100, 2);
-      this.hot.push({ kind: 'room', id: r.id, x: x - 3, y: y - 3, w: w + 6, h: h + 6 });
+      ctx.fillRect(x + 6, y + h - 4, (w - 12) * st.progress / 100, 2);
+      this.hot.push({ kind: 'room', id, x: x - 3, y: y - 3, w: w + 6, h: h + 6 });
     }
+    setRuns(runs) { this.runs = runs || []; }
     drawOverview(ctx, r) {
-      const w = 300, h = 76;
-      const x = Math.round(r.x + r.w / 2 - w / 2), y = r.y + 20;
+      const w = Math.min(330, r.w - 80), h = 80;
+      const x = Math.round(r.x + r.w / 2 - w / 2 + 20), y = r.y + 18;
       const hov = this.hoverSpot && this.hoverSpot.kind === 'overview';
       ctx.fillStyle = '#2a2a33';
       ctx.fillRect(x - 6, y - 6, w + 12, h + 12);
       ctx.fillStyle = hov ? '#26384a' : '#1c2836';
       ctx.fillRect(x, y, w, h);
-      const t = this.tasks || { projects: [], tasks: [] };
-      const active = t.projects.filter((p) => p.status !== 'done');
-      const doneN = t.projects.length - active.length;
+      const runs = this.runs || [];
+      const live = runs.filter((k) => ['queued', 'running', 'asking'].includes(k.status));
+      const asking = live.filter((k) => k.status === 'asking').length;
+      const queued = live.filter((k) => k.status === 'queued').length;
       ctx.textAlign = 'left';
       ctx.font = `bold 10px ${FONT}`;
       ctx.fillStyle = '#9fc3e6';
-      ctx.fillText('專案總覽', x + 8, y + 13);
+      ctx.fillText('指揮白板', x + 8, y + 13);
       ctx.textAlign = 'right';
       ctx.font = `9px ${FONT}`;
-      ctx.fillStyle = '#7f97ad';
-      ctx.fillText(`進行中 ${active.length}・已完成 ${doneN}${this.running ? '・執行中…' : ''}`, x + w - 8, y + 13);
-      const rows = active.slice(0, 3);
+      ctx.fillStyle = asking ? '#ffd166' : '#7f97ad';
+      ctx.fillText(`進行中 ${live.length - queued}${queued ? `・排隊 ${queued}` : ''}${asking ? `・待回答 ${asking}` : ''}`, x + w - 8, y + 13);
+      const rows = live.slice(0, 3);
       if (!rows.length) {
         ctx.textAlign = 'center';
         ctx.fillStyle = '#7f97ad';
         ctx.font = `11px ${FONT}`;
-        ctx.fillText('目前沒有進行中的專案', x + w / 2, y + 46);
+        ctx.fillText('目前沒有進行中的任務', x + w / 2, y + 42);
+        ctx.font = `9px ${FONT}`;
+        ctx.fillText('點這裡發起任務、管理日常任務', x + w / 2, y + 58);
       }
-      rows.forEach((p, i) => {
-        const ts = t.tasks.filter((k) => k.projectId === p.id);
-        const prog = ts.length ? Math.round(ts.reduce((s, k) => s + (k.status === 'done' ? 100 : k.progress || 0), 0) / ts.length) : 0;
-        const yy = y + 28 + i * 16;
+      rows.forEach((k, i) => {
+        const yy = y + 30 + i * 17;
         ctx.textAlign = 'left';
         ctx.font = `10px ${FONT}`;
-        ctx.fillStyle = p.status === 'blocked' ? '#ff9b8a' : '#e8eef5';
-        let title = p.title;
-        while (ctx.measureText(title).width > 130 && title.length > 2) title = title.slice(0, -2) + '…';
+        ctx.fillStyle = k.status === 'asking' ? '#ffd166' : '#e8eef5';
+        let title = k.title || '';
+        while (ctx.measureText(title).width > 120 && title.length > 2) title = title.slice(0, -2) + '…';
         ctx.fillText(title, x + 8, yy + 4);
-        ctx.fillStyle = '#33465a';
-        ctx.fillRect(x + 146, yy - 3, 110, 6);
-        ctx.fillStyle = p.status === 'blocked' ? '#d9614f' : '#6cc16f';
-        ctx.fillRect(x + 146, yy - 3, 110 * prog / 100, 6);
-        ctx.textAlign = 'right';
-        ctx.fillStyle = '#c9d6e3';
-        ctx.fillText(p.status === 'blocked' ? '卡住' : `${prog}%`, x + w - 8, yy + 4);
+        ctx.fillStyle = '#9fb3c6';
+        let st = k.status === 'queued' ? '排隊中' : k.status === 'asking' ? '等你回答' : (k.stepLabel || '');
+        while (ctx.measureText(st).width > w - 150 && st.length > 2) st = st.slice(0, -2) + '…';
+        ctx.fillText(st, x + 136, yy + 4);
       });
       this.hot.push({ kind: 'overview', id: 'meeting', x: x - 6, y: y - 6, w: w + 12, h: h + 12 });
     }

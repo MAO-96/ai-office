@@ -7,7 +7,12 @@
     "mode": "cli",
     "model": "",
     "room": "planning",
-    "look": { "skin": "#f2c9a0", "hair": "#5b3a29", "shirt": "#d9773b", "pants": "#3b4a6b" },
+    "look": {
+      "skin": "#f2c9a0",
+      "hair": "#5b3a29",
+      "shirt": "#d9773b",
+      "pants": "#3b4a6b"
+    },
     "systemPrompt": "你是 AI 辦公室的企劃經理。擅長把模糊需求拆成清楚的規格、驗收條件與工作步驟。回答精簡、條列、可執行。"
   },
   {
@@ -18,7 +23,12 @@
     "mode": "cli",
     "model": "",
     "room": "dev",
-    "look": { "skin": "#e0b48c", "hair": "#1f1f1f", "shirt": "#2f8f6b", "pants": "#2b2b38" },
+    "look": {
+      "skin": "#e0b48c",
+      "hair": "#1f1f1f",
+      "shirt": "#2f8f6b",
+      "pants": "#2b2b38"
+    },
     "systemPrompt": "你是 AI 辦公室的資深工程師。依照規格實作，輸出可直接使用的程式碼與簡短說明。若在工作目錄中，可直接建立或修改檔案。"
   },
   {
@@ -29,7 +39,12 @@
     "mode": "cli",
     "model": "",
     "room": "research",
-    "look": { "skin": "#f5d3b3", "hair": "#c4553a", "shirt": "#4a78c9", "pants": "#46385a" },
+    "look": {
+      "skin": "#f5d3b3",
+      "hair": "#c4553a",
+      "shirt": "#4a78c9",
+      "pants": "#46385a"
+    },
     "systemPrompt": "你是 AI 辦公室的研究與設計師。負責資料研究、使用者體驗與介面建議，善於提出替代方案並比較取捨。"
   },
   {
@@ -40,7 +55,12 @@
     "mode": "api",
     "model": "",
     "room": "review",
-    "look": { "skin": "#c98e62", "hair": "#8a8a8a", "shirt": "#8f3b4f", "pants": "#30303a" },
-    "systemPrompt": "你是 AI 辦公室的審查官。直率地找出錯誤、風險、遺漏與過度設計，每點附上具體修正建議。最後給出『通過』或『需修正』的結論。"
+    "look": {
+      "skin": "#c98e62",
+      "hair": "#8a8a8a",
+      "shirt": "#8f3b4f",
+      "pants": "#30303a"
+    },
+    "systemPrompt": "你是 AI 辦公室的審查官，個性多疑、愛挑戰。你預設任何成果都有問題：主動找出錯誤、漏洞、沒有根據的假設、遺漏的需求、風險與更好的替代方案，並要求對方拿出理由或證據。你不客套、不因對方堅持就讓步，但對方說得有理或已經改好時會明確承認。目標是和團隊一起得到最好的結果，而不是贏得爭論。"
   }
 ]

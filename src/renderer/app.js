@@ -23,7 +23,11 @@
 
   const office = new window.Office($('#office'), state, {
     onSelect: (id) => { if (id) { switchTab('agents'); openAgent(id); } },
-    onBoard: (kind, id) => (kind === 'overview' ? openOverview() : openRoomBoard(id)),
+    onBoard: (kind, id) => {
+      if (kind === 'overview') return openCommand(runs.some((r) => LIVE.includes(r.status)) ? 'live' : 'new');
+      if (kind === 'desk') { switchTab('agents'); openAgent(null); toast('替新同事設定名字、AI 與個性吧！'); return null; }
+      return openRoomBoard(id);
+    },
   });
   let tasks = state.tasks || { projects: [], tasks: [] };
   let usage = {};
@@ -49,68 +53,219 @@
   const engineOf = (a) => state.engines[a.engine] || { label: a.engine, color: '#999' };
   const agentName = (id) => { const a = state.agents.find((x) => x.id === id); return a ? a.name : id; };
 
-  // ---------- 任務 ----------
-  function renderTask() {
-    const sel = $('#wfSelect');
-    const cur = sel.value;
-    sel.innerHTML = state.workflows.map((w) => `<option value="${esc(w.id)}">${esc(w.name)}（${w.type === 'meeting' ? '會議' : '管線'}）</option>`).join('');
-    if (cur && state.workflows.some((w) => w.id === cur)) sel.value = cur;
-    renderChain();
+  // ---------- 任務：啟動器（右側面板與會議室白板共用） ----------
+  let runs = state.runs || [];
+  let routines = state.routines || [];
+  const LIVE = ['queued', 'running', 'asking'];
+  const STATUS_TXT = { queued: '排隊中', running: '進行中', asking: '等你回答', finished: '完成', failed: '失敗', stopped: '已停止' };
+  const launchMode = {};
+  function prefs(k, v) {
+    try { if (v === undefined) return localStorage.getItem('aiOffice.' + k); localStorage.setItem('aiOffice.' + k, v); } catch (_) { /* 無儲存空間 */ }
+    return null;
+  }
+  function launcherHTML(px) {
+    return `
+      <div class="seg">
+        <button type="button" data-mode="single">交辦單人</button>
+        <button type="button" data-mode="workflow">協作流程</button>
+      </div>
+      <div data-show="single"><label>交給誰</label><select id="${px}Agent"></select></div>
+      <div data-show="workflow"><label>協作流程</label><select id="${px}Wf"></select>
+        <p class="hint" id="${px}WfDesc"></p><div class="chain" id="${px}WfChain"></div></div>
+      <label>任務內容</label>
+      <textarea id="${px}Task" rows="5" placeholder="例如：幫我規劃一個個人記帳 App 的 MVP，並寫出核心資料結構"></textarea>
+      <label class="chk" style="margin-top:8px"><input type="checkbox" id="${px}Clarify" /> 開始前先追問、確認需求</label>
+      <div class="row"><button class="primary" id="${px}Run">開始（另開一個任務）</button></div>`;
+  }
+  function renderLauncher(px) {
+    const box = document.querySelector(`.launcher[data-prefix="${px}"]`);
+    if (!box) return;
+    if (!box.dataset.ready) { box.innerHTML = launcherHTML(px); box.dataset.ready = '1'; bindLauncher(px, box); }
+    const mode = launchMode[px] || prefs('launchMode') || 'workflow';
+    launchMode[px] = mode;
+    box.querySelectorAll('.seg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
+    box.querySelectorAll('[data-show]').forEach((el) => { el.hidden = el.dataset.show !== mode; });
+    const ag = $(`#${px}Agent`), cur = ag.value;
+    ag.innerHTML = state.agents.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}（${esc(a.title || '')}・${esc(engineOf(a).label)}）</option>`).join('');
+    if (cur && state.agents.some((a) => a.id === cur)) ag.value = cur;
+    const wf = $(`#${px}Wf`), cw = wf.value;
+    wf.innerHTML = state.workflows.map((w) => `<option value="${esc(w.id)}">${esc(w.name)}（${w.type === 'meeting' ? '會議' : '管線'}）</option>`).join('');
+    if (cw && state.workflows.some((w) => w.id === cw)) wf.value = cw;
+    renderChain(px);
+    const c = prefs('clarify');
+    $(`#${px}Clarify`).checked = c == null ? true : c === '1';
+  }
+  function bindLauncher(px, box) {
+    box.querySelectorAll('.seg button').forEach((b) => b.addEventListener('click', () => {
+      launchMode[px] = b.dataset.mode;
+      prefs('launchMode', b.dataset.mode);
+      renderLauncher(px);
+    }));
+    $(`#${px}Wf`).addEventListener('change', () => renderChain(px));
+    $(`#${px}Clarify`).addEventListener('change', (e) => prefs('clarify', e.target.checked ? '1' : '0'));
+    $(`#${px}Run`).addEventListener('click', async () => {
+      const task = $(`#${px}Task`).value.trim();
+      if (!task) { toast('請先輸入任務內容', true); return; }
+      const r = await guard(() => api.startRun({
+        kind: launchMode[px], agentId: $(`#${px}Agent`).value, workflowId: $(`#${px}Wf`).value, task, clarify: $(`#${px}Clarify`).checked,
+      }));
+      if (r) {
+        $(`#${px}Task`).value = '';
+        toast('任務已開始，可以繼續交辦下一件');
+        if (px === 'w') openCommand('live');
+      }
+    });
   }
   function chip(id) {
     const a = state.agents.find((x) => x.id === id);
     const color = a ? engineOf(a).color : '#777';
     return `<span class="chip"><i style="background:${esc(color)}"></i>${esc(agentName(id))}</span>`;
   }
-  function renderChain() {
-    const wf = state.workflows.find((w) => w.id === $('#wfSelect').value);
-    $('#wfDesc').textContent = wf ? wf.description || '' : '';
-    if (!wf) { $('#wfChain').innerHTML = ''; return; }
+  function renderChain(px) {
+    const wf = state.workflows.find((w) => w.id === $(`#${px}Wf`).value);
+    $(`#${px}WfDesc`).textContent = wf ? wf.description || '' : '';
+    if (!wf) { $(`#${px}WfChain`).innerHTML = ''; return; }
     if (wf.type === 'meeting') {
-      $('#wfChain').innerHTML = `${wf.participants.map(chip).join('')}<span class="arrow">× ${wf.rounds} 輪 →</span>${chip(wf.moderator)}<span class="arrow">總結</span>`;
+      $(`#${px}WfChain`).innerHTML = `${wf.participants.map(chip).join('')}<span class="arrow">× ${wf.rounds} 輪 →</span>${chip(wf.moderator)}<span class="arrow">總結</span>`;
     } else {
-      $('#wfChain').innerHTML = wf.steps.map((s) => `${chip(s.agent)}<span class="arrow">${esc(s.label)}</span>`).join('<span class="arrow">→</span>');
+      $(`#${px}WfChain`).innerHTML = wf.steps.map((st) => (st.type === 'review'
+        ? `${chip(st.agent)}<span class="arrow">質疑・與 ${esc((st.with || []).map(agentName).join('、'))} 討論到共識</span>`
+        : `${chip(st.agent)}<span class="arrow">${esc(st.label)}</span>`)).join('<span class="arrow">→</span>');
     }
   }
-  $('#wfSelect').addEventListener('change', renderChain);
 
-  $('#runBtn').addEventListener('click', async () => {
-    const task = $('#taskInput').value.trim();
-    if (!task) { toast('請先輸入任務內容', true); return; }
-    $('#resultBox').hidden = true;
-    setRunning(true);
-    noteListEl().innerHTML = '';
-    const r = await guard(() => api.startRun($('#wfSelect').value, task, { clarify: $('#clarifyChk').checked }));
-    setRunning(false);
-    if (r) {
-      lastReport = r.file;
-      $('#resultText').textContent = r.final;
-      $('#resultBox').hidden = false;
-      $('#openReport').hidden = !r.file;
-    }
-  });
-  $('#stopBtn').addEventListener('click', () => api.stopRun());
-  $('#openReport').addEventListener('click', () => lastReport && api.openFile(lastReport));
-
-  function setRunning(on) {
-    $('#runBtn').disabled = on;
-    $('#stopBtn').disabled = !on;
-    $('#noteBox').hidden = !on;
+  // ---------- 任務清單（每個任務像一段對話） ----------
+  function timeAgo(iso) {
+    if (!iso) return '';
+    const m = Math.round((Date.now() - Date.parse(iso)) / 60000);
+    if (m < 1) return '剛剛';
+    if (m < 60) return `${m} 分鐘前`;
+    if (m < 1440) return `${Math.round(m / 60)} 小時前`;
+    return new Date(iso).toLocaleDateString('zh-TW');
   }
-  const noteListEl = () => $('#noteList');
-  try { const v = localStorage.getItem('aiOffice.clarify'); if (v != null) $('#clarifyChk').checked = v === '1'; } catch (_) { /* 無儲存空間 */ }
-  $('#clarifyChk').addEventListener('change', (e) => { try { localStorage.setItem('aiOffice.clarify', e.target.checked ? '1' : '0'); } catch (_) { /* ignore */ } });
+  function runCard(r) {
+    const live = LIVE.includes(r.status);
+    const who = r.currentAgent ? agentName(r.currentAgent) : (r.agentId ? agentName(r.agentId) : '');
+    const daily = r.meta && r.meta.routineId ? '<span class="rc-tag">日常</span>' : '';
+    return `<div class="runcard ${r.status}" data-run="${esc(r.runId)}">
+      <div class="rc-top"><b>${esc(r.title)}</b><span class="rc-st ${r.status}">${STATUS_TXT[r.status] || esc(r.status)}</span></div>
+      <div class="rc-meta">${daily}${esc(r.workflowName || '交辦')}${who ? '・' + esc(who) : ''}・${esc(timeAgo(r.startedAt))}</div>
+      ${live ? `<div class="rc-step">${esc(r.stepLabel || '')}</div><div class="pbar"><i style="width:${r.progress || 3}%"></i></div>`
+        : r.status === 'finished' ? `<div class="rc-final">${esc(String(r.final || '').slice(0, 110))}</div>`
+          : r.error ? `<div class="rc-err">${esc(r.error)}</div>` : ''}
+      ${r.consensus === true ? '<span class="rc-tag ok">審查已達共識</span>' : r.consensus === false ? '<span class="rc-tag warn">審查有分歧，已裁決</span>' : ''}
+    </div>`;
+  }
+  function bindRunCards(sel) { $$(`${sel} .runcard`).forEach((el) => el.addEventListener('click', () => openRun(el.dataset.run))); }
+  function renderRuns() {
+    $('#runList').innerHTML = runs.length ? runs.slice(0, 30).map(runCard).join('') : '<p class="hint">還沒有任務。上面輸入內容開始第一個吧！可以連續開好幾個，大家會同時做。</p>';
+    bindRunCards('#runList');
+    office.setRuns(runs);
+    renderTopStatus();
+    if (modalView && modalView.kind === 'command' && modalView.tab === 'live') renderCommandBody();
+    if (modalView && modalView.kind === 'run') syncRunModal();
+  }
+  function renderTopStatus() {
+    const live = runs.filter((r) => LIVE.includes(r.status));
+    const asking = live.filter((r) => r.status === 'asking').length;
+    const st = $('#runStatus');
+    st.className = 'run-status' + (live.length ? ' running' : '');
+    $('#runLabel').textContent = live.length ? `進行中 ${live.length} 個任務${asking ? `・${asking} 個等你回答` : ''}` : '待命中';
+    $('#runBar').style.width = live.length ? `${Math.round(live.reduce((n, r) => n + (r.progress || 3), 0) / live.length)}%` : '0';
+  }
+  $('#clearRuns').addEventListener('click', async () => { const r = await guard(() => api.clearRuns()); if (r) { runs = r; renderRuns(); } });
+
+  // 任務對話視窗
+  let runView = null;
+  async function openRun(runId) {
+    const d = await guard(() => api.getRun(runId));
+    if (!d) return;
+    modalView = { kind: 'run', runId };
+    runView = d;
+    renderRunModal();
+  }
+  function entryHTML(e) {
+    const a = e.agentId && state.agents.find((x) => x.id === e.agentId);
+    const color = a ? engineOf(a).color : 'var(--accent)';
+    const who = a ? `<span class="who" style="color:${esc(color)}">${esc(a.name)}</span>` : '';
+    if (e.kind === 'prompt') return `<div class="entry prompt" style="border-left-color:${esc(color)}"><details><summary>${who}收到的指示</summary>${esc(e.text)}</details></div>`;
+    const k = e.kind === 'stream' ? 'output stream' : e.kind;
+    return `<div class="entry ${k}" data-agent="${esc(e.agentId || '')}" style="${e.kind === 'error' ? '' : `border-left-color:${esc(color)}`}">${who}<span class="txt">${esc(e.text)}</span></div>`;
+  }
+  function renderRunModal() {
+    const d = runView;
+    const live = LIVE.includes(d.status);
+    openModal(d.title, `${d.workflowName || '交辦'}・${STATUS_TXT[d.status] || d.status}${live && d.stepLabel ? '・' + d.stepLabel : ''}`);
+    const keepNote = $('#rmNote') ? $('#rmNote').value : '';
+    $('#modalBody').innerHTML = `
+      <div class="convo" id="convo">${(d.log || []).map(entryHTML).join('') || '<p class="hint">還沒有內容</p>'}</div>
+      ${d.status === 'finished' ? `<div class="result"><div class="result-head"><strong>最終結果</strong>${d.file ? '<button class="ghost" id="rmReport">開啟報告檔</button>' : ''}</div><pre>${esc(d.final)}</pre></div>` : ''}
+      ${d.error && d.status !== 'finished' ? `<p class="rc-err">${esc(d.error)}</p>` : ''}
+      ${d.asking && d.ask ? `<button class="askbanner" id="rmAsk">${esc(d.ask.agentName)} 有 ${d.ask.questions.length} 個問題等你回答 ▸</button>` : ''}
+      ${live ? `<div class="notebox"><label>追加指示（下一位成員開始工作時生效）</label>
+          <div class="row"><input id="rmNote" placeholder="例如：報告改成條列、預算控制在一萬內" /><button id="rmNoteSend">送出</button></div>
+          <ul class="notes">${(d.notes || []).map((n) => `<li>${esc(n)}</li>`).join('')}</ul></div>
+          <div class="row"><button class="danger" id="rmStop">停止這個任務</button></div>`
+        : `<div class="row"><button id="rmAgain">用同樣內容再開一次</button><button class="ghost" id="rmRemove">刪除這筆紀錄</button></div>`}`;
+    if ($('#rmNote')) $('#rmNote').value = keepNote;
+    const c = $('#convo');
+    c.scrollTop = c.scrollHeight;
+    const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
+    on('rmReport', () => api.openFile(d.file));
+    on('rmAsk', () => openAsk(pendingAsks.find((x) => x.runId === d.runId) || { source: 'run', runId: d.runId, ...d.ask }));
+    const sendRunNote = async () => {
+      const text = $('#rmNote').value.trim();
+      if (!text) return;
+      const r = await guard(() => api.addNote(d.runId, text));
+      if (r) { $('#rmNote').value = ''; d.notes = r.notes; renderRunModal(); toast('已追加，下一位成員開始時生效'); }
+    };
+    on('rmNoteSend', sendRunNote);
+    if ($('#rmNote')) $('#rmNote').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendRunNote(); });
+    on('rmStop', async () => { if (confirm('確定停止這個任務？')) await guard(() => api.stopRun(d.runId)); });
+    on('rmRemove', async () => { const r = await guard(() => api.removeRun(d.runId)); if (r) { runs = r; renderRuns(); closeModal(); } });
+    on('rmAgain', async () => {
+      const r = await guard(() => api.startRun(d.type === 'single'
+        ? { kind: 'single', agentId: d.agentId, task: d.task, title: d.title }
+        : { kind: 'workflow', workflowId: d.workflowId, task: d.task, title: d.title }));
+      if (r) { toast('已再開一次'); openRun(r.runId); }
+    });
+  }
+  // 任務狀態有變化時（開始、追問、完成）重新抓一次完整紀錄
+  async function syncRunModal() {
+    if (!modalView || modalView.kind !== 'run' || !runView) return;
+    const s = runs.find((r) => r.runId === runView.runId);
+    if (!s || (s.status === runView.status && !!s.asking === !!runView.asking && s.stepLabel === runView.stepLabel)) return;
+    const d = await api.getRun(runView.runId).catch(() => null);
+    if (d && modalView && modalView.kind === 'run' && modalView.runId === d.runId) { runView = d; renderRunModal(); }
+  }
+  function appendRunLog(d) {
+    if (!modalView || modalView.kind !== 'run' || !runView || d.runId !== runView.runId) return;
+    const c = $('#convo');
+    if (!c) return;
+    const stick = c.scrollTop + c.clientHeight >= c.scrollHeight - 40;
+    if (d.kind === 'chunk') {
+      let el = c.lastElementChild;
+      if (!el || !el.classList.contains('stream') || el.dataset.agent !== (d.agentId || '')) {
+        c.insertAdjacentHTML('beforeend', entryHTML({ kind: 'stream', agentId: d.agentId, text: '' }));
+        el = c.lastElementChild;
+      }
+      el.querySelector('.txt').textContent += d.text;
+    } else {
+      const last = c.lastElementChild;
+      if (d.kind === 'output' && last && last.classList.contains('stream') && last.dataset.agent === (d.agentId || '')) last.remove();
+      c.insertAdjacentHTML('beforeend', entryHTML({ kind: d.kind, agentId: d.agentId, text: d.text }));
+    }
+    if (stick) c.scrollTop = c.scrollHeight;
+  }
+
   async function sendNote(inputSel) {
     const text = $(inputSel).value.trim();
     if (!text) return;
-    const r = await guard(() => api.addNote(text));
+    const r = await guard(() => api.addNote('devops', text));
     if (!r) return;
     $(inputSel).value = '';
-    if (r.notes) { noteListEl().innerHTML = r.notes.map((n) => `<li>${esc(n)}</li>`).join(''); toast('已追加，下一位成員開始時生效'); }
     if (r.devops) { dev = r.devops; renderDev(); toast(r.devops.phase === 'implementing' ? '已交給工程接著修改' : '已追加'); }
   }
-  $('#noteSend').addEventListener('click', () => sendNote('#noteInput'));
-  $('#noteInput').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendNote('#noteInput'); });
 
   // ---------- 角色 ----------
   function miniSprite(canvas, look, bg) {
@@ -167,17 +322,14 @@
     $('#testAgent').disabled = false;
   });
 
-  function roomName(id) {
-    for (const f of state.rooms.floors) for (const r of f) if (r.id === id) return r.name;
-    return id;
-  }
-
+  const depts = () => state.rooms.departments || state.rooms.floors.flat().filter((r) => !['meeting', 'lounge', 'office'].includes(r.id));
+  function roomName(id) { return (depts().find((d) => d.id === id) || { name: id || '未分組' }).name; }
   const form = $('#agentForm');
   const F = form.elements;
   function fillSelects() {
     F.engine.innerHTML = Object.entries(state.engines).filter(([, e]) => e && typeof e === 'object')
       .map(([id, e]) => `<option value="${esc(id)}">${esc(e.label)}</option>`).join('');
-    F.room.innerHTML = state.rooms.floors.flat().filter((r) => r.id !== 'meeting')
+    F.room.innerHTML = depts()
       .map((r) => `<option value="${esc(r.id)}">${esc(r.name)}</option>`).join('');
   }
 
@@ -267,6 +419,7 @@
     $('#mockToggle').disabled = !!api.isPreview;
     $('#wsPath').value = state.workspace || '';
     $('#timeoutInput').value = state.settings.timeoutMinutes || 10;
+    $('#parallelInput').value = state.settings.maxParallel || 3;
     $('#modeBadge').textContent = api.isPreview ? '瀏覽器預覽（模擬）' : state.settings.mockMode ? '模擬模式' : '真實 AI';
     $('#modeBadge').classList.toggle('live', !api.isPreview && !state.settings.mockMode);
     const names = Object.keys(state.keys);
@@ -292,6 +445,11 @@
     const next = await guard(() => api.saveSettings({ timeoutMinutes: v }));
     if (next) setState(next);
   });
+  $('#parallelInput').addEventListener('change', async (e) => {
+    const v = Math.max(1, Math.min(8, parseInt(e.target.value, 10) || 3));
+    const next = await guard(() => api.saveSettings({ maxParallel: v }));
+    if (next) { setState(next); toast(`最多同時 ${v} 個任務`); }
+  });
   $('#wsChoose').addEventListener('click', async () => { const n = await guard(() => api.chooseWorkspace()); if (n) setState(n); });
   $('#wsOpen').addEventListener('click', () => api.openWorkspace());
   $('#cliCheck').addEventListener('click', async () => {
@@ -311,8 +469,9 @@
 
   // ---------- 紀錄 ----------
   const logBody = $('#logBody');
-  let streamEl = {}; // agentId -> 正在串流的 entry
-  function logEntry(kind, agentId, text) {
+  let streamEl = {}; // runId|agentId -> 正在串流的 entry
+  const runTitle = (runId) => { const r = runs.find((x) => x.runId === runId); return r ? r.title : ''; };
+  function logEntry(kind, agentId, text, runId) {
     const a = state.agents.find((x) => x.id === agentId);
     const color = a ? engineOf(a).color : 'var(--accent)';
     const el = document.createElement('div');
@@ -320,11 +479,15 @@
     el.dataset.agent = agentId || '';
     el.style.borderLeftColor = kind === 'error' ? '' : color;
     const who = a ? `<span class="who" style="color:${esc(color)}">${esc(a.name)}</span>` : '';
-    if (kind === 'prompt') el.innerHTML = `<details><summary>${who}收到的提示詞</summary>${esc(text)}</details>`;
-    else el.innerHTML = `${who}<span class="txt">${esc(text)}</span>`;
+    const tag = runId && runTitle(runId) ? `<span class="rtag" data-run="${esc(runId)}">${esc(runTitle(runId).slice(0, 14))}</span>` : '';
+    if (kind === 'prompt') el.innerHTML = `<details><summary>${tag}${who}收到的指示</summary>${esc(text)}</details>`;
+    else el.innerHTML = `${tag}${who}<span class="txt">${esc(text)}</span>`;
+    const t = el.querySelector('.rtag');
+    if (t) t.addEventListener('click', () => openRun(runId));
     applyFilter(el);
     const stick = logBody.scrollTop + logBody.clientHeight >= logBody.scrollHeight - 30;
     logBody.appendChild(el);
+    while (logBody.children.length > 600) logBody.firstElementChild.remove();
     if (stick) logBody.scrollTop = logBody.scrollHeight;
     return el;
   }
@@ -347,34 +510,38 @@
     office.onEvent(type, d);
     if (type === 'update') showUpdate(d);
     if (type === 'devops') { dev = d; renderDev(); }
-    if (type === 'ask') { pendingAsk = d; renderAskBanners(); openAsk(d); }
-    if (type === 'ask-done') { pendingAsk = null; renderAskBanners(); if (modalView && modalView.kind === 'ask') closeModal(); }
-    if (type === 'note' && d) { noteListEl().innerHTML = d.notes.map((n) => `<li>${esc(n)}</li>`).join(''); }
+    if (type === 'ask') {
+      const ask = { ...d, runId: d.runId || 'devops' };
+      pendingAsks = pendingAsks.filter((x) => x.runId !== ask.runId).concat([ask]);
+      renderAskBanners();
+      if ($('#modal').hidden) openAsk(ask); else toast(`${ask.agentName} 有問題等你回答（${ask.title || '任務'}）`);
+    }
+    if (type === 'ask-done') {
+      const id = d.runId || 'devops';
+      pendingAsks = pendingAsks.filter((x) => x.runId !== id);
+      renderAskBanners();
+      if (modalView && modalView.kind === 'ask' && modalView.runId === id) closeModal();
+    }
+    if (type === 'runs') { runs = d; renderRuns(); }
+    if (type === 'routines') { routines = d; if (modalView && modalView.kind === 'command' && modalView.tab === 'routines') refreshModal(); }
     if (type === 'tasks') { tasks = d; office.setTasks(tasks); refreshModal(); }
     if (type === 'usage' && d) { usage[d.engine] = d; office.setUsage(usage); renderUsage(); }
     if (type === 'log') {
+      appendRunLog(d);
+      const key = `${d.runId || ''}|${d.agentId || ''}`;
       if (d.kind === 'chunk') {
-        let el = streamEl[d.agentId];
-        if (!el) el = streamEl[d.agentId] = logEntry('output', d.agentId, '');
+        let el = streamEl[key];
+        if (!el) el = streamEl[key] = logEntry('output', d.agentId, '', d.runId);
         el.querySelector('.txt').textContent += d.text;
         logBody.scrollTop = logBody.scrollHeight;
       } else if (d.kind === 'output') {
-        const el = streamEl[d.agentId];
-        if (el) el.querySelector('.txt').textContent = d.text; else logEntry('output', d.agentId, d.text);
-        delete streamEl[d.agentId];
+        const el = streamEl[key];
+        if (el) el.querySelector('.txt').textContent = d.text; else logEntry('output', d.agentId, d.text, d.runId);
+        delete streamEl[key];
       } else {
-        if (d.kind === 'error') delete streamEl[d.agentId];
-        logEntry(d.kind, d.agentId, d.text);
+        if (d.kind === 'error') delete streamEl[key];
+        logEntry(d.kind, d.agentId, d.text, d.runId);
       }
-    }
-    if (type === 'run') {
-      const st = $('#runStatus');
-      st.className = 'run-status';
-      if (d.status === 'started') { st.classList.add('running'); $('#runLabel').textContent = d.label; $('#runBar').style.width = '3%'; setRunning(true); }
-      if (d.status === 'step') { st.classList.add('running'); $('#runLabel').textContent = d.total ? `${d.index}/${d.total}　${d.label}` : d.label; $('#runBar').style.width = `${Math.round(((d.index - 0.5) / d.total) * 100)}%`; }
-      if (d.status === 'finished') { st.classList.add('done'); $('#runLabel').textContent = '完成'; $('#runBar').style.width = '100%'; }
-      if (d.status === 'failed') { st.classList.add('failed'); $('#runLabel').textContent = '失敗：' + (d.error || ''); }
-      if (d.status === 'stopped') { $('#runLabel').textContent = '已停止'; $('#runBar').style.width = '0'; }
     }
   });
 
@@ -432,8 +599,7 @@
 
   // ================= 白板（各處室）與專案總覽（會議室） =================
   const STATUS = { todo: '待辦', doing: '進行中', blocked: '卡住', done: '完成' };
-  const roomsFlat = () => state.rooms.floors.flat();
-  const roomLabel = (id) => (roomsFlat().find((r) => r.id === id) || { name: id }).name;
+  const roomLabel = (id) => roomName(id);
   const projectOf = (id) => tasks.projects.find((p) => p.id === id);
   const taskPct = (t) => (t.status === 'done' ? 100 : t.progress || 0);
   const projPct = (pid) => {
@@ -457,8 +623,9 @@
     // 正在輸入時不要重畫，避免打字被打斷
     const a = document.activeElement;
     if (a && $('#modalBody').contains(a) && (a.tagName === 'INPUT' || a.tagName === 'TEXTAREA')) return;
-    if (modalView.kind === 'ask') return;
-    if (modalView.kind === 'room') renderRoomBoard(modalView.id); else renderOverview();
+    if (modalView.kind === 'ask' || modalView.kind === 'run') return;
+    if (modalView.kind === 'room') renderRoomBoard(modalView.id);
+    else if (modalView.kind === 'command') { if (!(modalView.tab === 'routines' && editingRoutine) && modalView.tab !== 'new') renderCommandBody(); }
   }
 
   function taskCard(t, showRoom) {
@@ -553,18 +720,14 @@
     $('#ntTitle').addEventListener('keydown', (e) => { if (e.key === 'Enter') add(); });
   }
 
-  function openOverview() {
-    modalView = { kind: 'overview' };
-    editingTask = null;
-    renderOverview();
-  }
   function renderOverview() {
     const active = tasks.projects.filter((p) => p.status !== 'done');
     const done = tasks.projects.filter((p) => p.status === 'done');
     const allTasks = tasks.tasks.filter((t) => active.some((p) => p.id === t.projectId));
     const overall = allTasks.length ? Math.round(allTasks.reduce((s, t) => s + taskPct(t), 0) / allTasks.length) : 0;
     const blockedN = active.filter((p) => p.status === 'blocked').length;
-    openModal('會議室　專案總覽', `進行中 ${active.length} 個・卡住 ${blockedN} 個・整體進度 ${overall}%・已完成 ${done.length} 個`);
+    if (!$('#cmdBody')) { openCommand('projects'); return; }
+    $('#modalSub').textContent = `進行中 ${active.length} 個・卡住 ${blockedN} 個・整體進度 ${overall}%・已完成 ${done.length} 個`;
     const card = (p) => {
       const ts = tasks.tasks.filter((t) => t.projectId === p.id);
       const pct = projPct(p.id);
@@ -573,7 +736,7 @@
       const stuck = ts.filter((t) => t.status === 'blocked');
       const doing = ts.filter((t) => t.status === 'doing');
       const name = (t) => (state.agents.find((a) => a.id === t.agentId) || { name: '未指派' }).name;
-      const src = p.source === 'workflow' ? `流程：${p.workflow || ''}` : p.source === 'daily' ? '日常' : '手動';
+      const src = p.source === 'workflow' ? `流程：${p.workflow || ''}` : p.source === 'quick' ? '交辦' : p.source === 'routine' ? '例行清單' : p.source === 'daily' ? '日常事項' : '手動';
       return `<div class="pcard ${p.status}">
         <div class="top"><div><b>${esc(p.title)}</b><div class="chipline">${esc(src)}・${STATUS[p.status] || ''}・${ts.filter((t) => t.status === 'done').length}/${ts.length} 完成</div></div><div class="pct">${pct}%</div></div>
         <div class="pbar ${p.status === 'blocked' ? 'blocked' : ''}"><i style="width:${pct}%"></i></div>
@@ -583,7 +746,7 @@
         ${p.source !== 'workflow' || p.status !== 'doing' ? `<div class="row" style="margin-top:8px"><button class="ghost" data-delp="${esc(p.id)}">刪除專案</button></div>` : ''}
       </div>`;
     };
-    $('#modalBody').innerHTML = `
+    $('#cmdBody').innerHTML = `
       <div class="row" style="margin:0 0 12px"><button id="npAdd">＋ 新增專案</button><button class="ghost" id="npClear"${done.length ? '' : ' disabled'}>清除已完成（${done.length}）</button>
       <span class="hint">點處室標籤可打開該處室白板</span></div>
       ${active.length ? `<div class="pcards">${active.map(card).join('')}</div>` : '<p class="hint">目前沒有進行中的專案。下任務給流程會自動建立，也可以手動新增。</p>'}
@@ -746,24 +909,26 @@
     ov.textContent = '重新啟動逾時，請關掉視窗再從捷徑開啟。';
   });
 
-  // ================= 企劃追問 =================
-  let pendingAsk = state.pendingAsk || null;
+  // ================= 追問（可能同時有好幾個任務在問） =================
+  let pendingAsks = (state.pendingAsks || []).map((a) => ({ ...a, runId: a.runId || 'devops' }));
   function renderAskBanners() {
     $$('.askbanner-slot').forEach((slot) => {
-      slot.innerHTML = pendingAsk ? `<button class="askbanner">${esc(pendingAsk.agentName)} 有 ${pendingAsk.questions.length} 個問題等你回答 ▸</button>` : '';
+      const n = pendingAsks.length;
+      slot.innerHTML = n ? `<button class="askbanner">${n === 1 ? `${esc(pendingAsks[0].agentName)} 有 ${pendingAsks[0].questions.length} 個問題等你回答` : `${n} 個任務有問題等你回答`} ▸</button>` : '';
       const b = slot.querySelector('button');
-      if (b) b.addEventListener('click', () => openAsk(pendingAsk));
+      if (b) b.addEventListener('click', () => openAsk(pendingAsks[0]));
     });
   }
   function openAsk(ask) {
     if (!ask) return;
-    modalView = { kind: 'ask' };
-    openModal(`${ask.agentName} 想先確認幾件事`, '回答越具體，做出來的東西越接近你要的；不想回答可以跳過');
+    modalView = { kind: 'ask', runId: ask.runId };
+    openModal(`${ask.agentName} 想先確認幾件事`, `${ask.title ? `任務：${ask.title}・` : ''}回答越具體，做出來的東西越接近你要的；不想回答可以跳過`);
     $('#modalBody').innerHTML = ask.questions.map((q, i) => `<div class="askq" data-i="${i}">
         <div class="q">${i + 1}. ${esc(q.q)}</div>
         ${q.options && q.options.length ? `<div class="opts">${q.options.map((o) => `<button type="button" data-opt="${esc(o)}">${esc(o)}</button>`).join('')}</div>` : ''}
         <input placeholder="${q.options && q.options.length ? '其他／補充說明（可不填）' : '你的回答'}" data-extra />
-      </div>`).join('') + `<div class="askfoot"><button class="primary" id="askSubmit">送出回答</button><button class="ghost" id="askSkip">跳過，直接開始</button></div>`;
+      </div>`).join('') + `<div class="askfoot"><button class="primary" id="askSubmit">送出回答</button><button class="ghost" id="askSkip">跳過，直接開始</button>
+        ${pendingAsks.length > 1 ? `<span class="hint">還有 ${pendingAsks.length - 1} 個任務在等你</span>` : ''}</div>`;
     $$('#modalBody .opts button').forEach((b) => b.addEventListener('click', () => {
       const on = !b.classList.contains('on');
       b.parentElement.querySelectorAll('button').forEach((x) => x.classList.remove('on'));
@@ -777,15 +942,144 @@
         return { q: q.q, a: [sel ? sel.dataset.opt : '', extra].filter(Boolean).join('；') };
       });
       if (answers && answers.every((a) => !a.a)) { toast('至少回答一題，或按「跳過」', true); return; }
-      const r = await guard(() => api.answerAsk(ask.source, answers));
-      if (r !== null) { pendingAsk = null; renderAskBanners(); closeModal(); }
+      const r = await guard(() => api.answerAsk(ask.runId, answers));
+      if (r !== null) {
+        pendingAsks = pendingAsks.filter((x) => x.runId !== ask.runId);
+        renderAskBanners();
+        closeModal();
+        if (pendingAsks.length) setTimeout(() => openAsk(pendingAsks[0]), 300);
+      }
     };
     $('#askSubmit').addEventListener('click', () => submit(false));
     $('#askSkip').addEventListener('click', () => submit(true));
   }
 
+  // ================= 會議室指揮白板 =================
+  const CMD_TABS = [['live', '進行中任務'], ['new', '發起任務'], ['routines', '日常任務'], ['projects', '專案總覽']];
+  function openCommand(tab) {
+    modalView = { kind: 'command', tab: tab || 'live' };
+    editingRoutine = null;
+    openModal('會議室　指揮白板', '');
+    $('#modalBody').innerHTML = `<nav class="cmdtabs">${CMD_TABS.map(([k, n]) => `<button data-ct="${k}">${n}</button>`).join('')}</nav><div id="cmdBody"></div>`;
+    $$('#modalBody [data-ct]').forEach((b) => b.addEventListener('click', () => { modalView.tab = b.dataset.ct; editingRoutine = null; renderCommandBody(); }));
+    renderCommandBody();
+  }
+  function renderCommandBody() {
+    if (!modalView || modalView.kind !== 'command' || !$('#cmdBody')) return;
+    const tab = modalView.tab;
+    $$('#modalBody [data-ct]').forEach((b) => b.classList.toggle('on', b.dataset.ct === tab));
+    const live = runs.filter((r) => LIVE.includes(r.status));
+    if (tab === 'live') {
+      const recent = runs.filter((r) => !LIVE.includes(r.status)).slice(0, 8);
+      $('#modalSub').textContent = `進行中 ${live.length} 個・最多同時 ${state.settings.maxParallel || 3} 個（可到設定調整）`;
+      $('#cmdBody').innerHTML = `
+        ${live.length ? `<div class="rgrid">${live.map(runCard).join('')}</div>` : '<p class="hint">目前沒有進行中的任務。到「發起任務」開始一個，或讓日常任務自動跑。</p>'}
+        ${recent.length ? `<h4 style="color:var(--muted)">最近結束</h4><div class="rgrid">${recent.map(runCard).join('')}</div>` : ''}`;
+      bindRunCards('#cmdBody');
+    } else if (tab === 'new') {
+      $('#modalSub').textContent = '可以連續發起好幾個任務，大家會同時進行';
+      $('#cmdBody').innerHTML = '<div class="launcher wide" data-prefix="w"></div>';
+      renderLauncher('w');
+    } else if (tab === 'routines') {
+      $('#modalSub').textContent = '時間到自動執行（AI Office 需開著；當天錯過的會在開啟後補跑一次）';
+      renderRoutines();
+    } else {
+      renderOverview();
+    }
+  }
+  const openOverview = () => openCommand('projects');
+
+  // ---------- 日常任務 ----------
+  let editingRoutine = null;
+  const KIND_TXT = { single: '交辦單人', workflow: '協作流程', checklist: '例行清單' };
+  const WEEK = ['日', '一', '二', '三', '四', '五', '六'];
+  function fmtWhen(iso) {
+    if (!iso) return '—';
+    return new Date(iso).toLocaleString('zh-TW', { month: 'numeric', day: 'numeric', weekday: 'short', hour: '2-digit', minute: '2-digit', hour12: false });
+  }
+  function routineFormHTML(r) {
+    const s = r.schedule || {};
+    const agentOpts = (sel) => state.agents.map((a) => `<option value="${esc(a.id)}"${a.id === sel ? ' selected' : ''}>${esc(a.name)}（${esc(a.title || '')}）</option>`).join('');
+    const items = (r.items && r.items.length ? r.items : [{ title: '', agentId: '' }]);
+    return `<div class="rform">
+      <div class="grid2">
+        <div><label>名稱</label><input data-r="title" value="${esc(r.title || '')}" placeholder="例如：每日晨報" /></div>
+        <div><label>類型</label><select data-r="kind">${Object.entries(KIND_TXT).map(([k, n]) => `<option value="${k}"${k === r.kind ? ' selected' : ''}>${n}</option>`).join('')}</select></div>
+      </div>
+      <div data-k="single"><label>交給誰</label><select data-r="agentId">${agentOpts(r.agentId)}</select></div>
+      <div data-k="workflow"><label>協作流程</label><select data-r="workflowId">${state.workflows.map((w) => `<option value="${esc(w.id)}"${w.id === r.workflowId ? ' selected' : ''}>${esc(w.name)}</option>`).join('')}</select></div>
+      <div data-k="checklist"><label>清單項目（每項指定負責的員工）</label>
+        <div class="ritems">${items.map((it) => `<div class="ritem"><input data-it="title" value="${esc(it.title)}" placeholder="例如：檢查信箱並整理重點" /><select data-it="agentId">${agentOpts(it.agentId)}</select><button type="button" class="ghost" data-it-del>✕</button></div>`).join('')}</div>
+        <button type="button" id="riAdd">＋ 新增一項</button></div>
+      <label data-k-label>要做的事</label>
+      <textarea data-r="prompt" rows="3" placeholder="例如：整理今天的科技新聞重點，條列 5 則並附來源">${esc(r.prompt || '')}</textarea>
+      <div class="grid3">
+        <div><label>頻率</label><select data-r="stype">${[['daily', '每天'], ['weekly', '每週'], ['manual', '只手動執行']].map(([k, n]) => `<option value="${k}"${k === (s.type || 'daily') ? ' selected' : ''}>${n}</option>`).join('')}</select></div>
+        <div data-s="time"><label>時間</label><input type="time" data-r="time" value="${esc(s.time || '09:00')}" /></div>
+      </div>
+      <div data-s="days" class="days">${WEEK.map((w, i) => `<label class="chk"><input type="checkbox" data-day="${i}"${(s.days || [1, 2, 3, 4, 5]).includes(i) ? ' checked' : ''} /> ${w}</label>`).join('')}</div>
+      <div class="row"><button class="primary" id="rSave">儲存</button><button class="ghost" id="rCancel">取消</button></div>
+    </div>`;
+  }
+  function syncRoutineForm() {
+    const f = $('.rform');
+    if (!f) return;
+    const kind = f.querySelector('[data-r="kind"]').value;
+    f.querySelectorAll('[data-k]').forEach((el) => { el.hidden = el.dataset.k !== kind; });
+    f.querySelector('[data-k-label]').textContent = kind === 'checklist' ? '共同說明（可不填，每一項都會參考）' : '要做的事';
+    const st = f.querySelector('[data-r="stype"]').value;
+    f.querySelector('[data-s="time"]').hidden = st === 'manual';
+    f.querySelector('[data-s="days"]').hidden = st !== 'weekly';
+  }
+  function renderRoutines() {
+    const list = routines.map((r) => `<div class="rcard ${r.enabled ? '' : 'off'}">
+      <div class="rc-top"><b>${esc(r.title)}</b><span class="rc-tag">${KIND_TXT[r.kind]}</span></div>
+      <div class="rc-meta">${esc(r.scheduleText || '')}・${r.kind === 'single' ? esc(agentName(r.agentId)) : r.kind === 'workflow' ? esc((state.workflows.find((w) => w.id === r.workflowId) || {}).name || '') : `${(r.items || []).length} 項`}</div>
+      <div class="rc-meta">下次：${r.enabled ? esc(fmtWhen(r.nextRunAt)) : '已暫停'}・上次：${r.runs ? `${esc(fmtWhen(r.lastRunAt))}（${STATUS_TXT[r.lastStatus] || r.lastStatus || '—'}）` : '尚未執行'}</div>
+      ${r.lastError ? `<div class="rc-err">${esc(r.lastError)}</div>` : ''}
+      <div class="row"><label class="chk"><input type="checkbox" data-en="${esc(r.id)}"${r.enabled ? ' checked' : ''} /> 啟用</label>
+        <button data-now="${esc(r.id)}">立即執行</button><button class="ghost" data-edit="${esc(r.id)}">編輯</button><button class="ghost danger" data-del="${esc(r.id)}">刪除</button></div>
+    </div>`).join('');
+    $('#cmdBody').innerHTML = editingRoutine
+      ? routineFormHTML(editingRoutine)
+      : `<div class="row" style="margin:0 0 12px"><button class="primary" id="rNew">＋ 新增日常任務</button></div>
+         ${routines.length ? `<div class="rgrid">${list}</div>` : '<p class="hint">還沒有日常任務。例如：每天 9:00 讓 Gemma 整理新聞、每週一讓 Clara 寫週報、每天早上產生一份例行清單交給大家分頭處理。</p>'}`;
+    const on = (sel, fn) => $$(`#cmdBody ${sel}`).forEach((el) => el.addEventListener('click', () => fn(el)));
+    on('#rNew', () => { editingRoutine = { kind: 'single', schedule: { type: 'daily', time: '09:00', days: [1, 2, 3, 4, 5] }, items: [], enabled: true }; renderRoutines(); });
+    on('[data-edit]', (el) => { editingRoutine = JSON.parse(JSON.stringify(routines.find((r) => r.id === el.dataset.edit))); renderRoutines(); });
+    on('[data-del]', async (el) => { if (!confirm('刪除這個日常任務？')) return; const r = await guard(() => api.deleteRoutine(el.dataset.del)); if (r) { routines = r; renderRoutines(); } });
+    on('[data-now]', async (el) => { const r = await guard(() => api.runRoutineNow(el.dataset.now)); if (r) { routines = r.routines; toast('已開始執行'); modalView.tab = 'live'; renderCommandBody(); } });
+    $$('#cmdBody [data-en]').forEach((el) => el.addEventListener('change', async () => { const r = await guard(() => api.setRoutineEnabled(el.dataset.en, el.checked)); if (r) { routines = r; renderRoutines(); } }));
+    if (!editingRoutine) return;
+    const f = $('.rform');
+    f.querySelectorAll('[data-r="kind"],[data-r="stype"]').forEach((el) => el.addEventListener('change', syncRoutineForm));
+    const bindDel = () => f.querySelectorAll('[data-it-del]').forEach((b) => { b.onclick = () => { if (f.querySelectorAll('.ritem').length > 1) b.parentElement.remove(); }; });
+    bindDel();
+    $('#riAdd').addEventListener('click', () => {
+      const row = f.querySelector('.ritem').cloneNode(true);
+      row.querySelector('[data-it="title"]').value = '';
+      f.querySelector('.ritems').appendChild(row);
+      bindDel();
+      row.querySelector('input').focus();
+    });
+    $('#rCancel').addEventListener('click', () => { editingRoutine = null; renderRoutines(); });
+    $('#rSave').addEventListener('click', async () => {
+      const g = (k) => f.querySelector(`[data-r="${k}"]`).value;
+      const data = {
+        id: editingRoutine.id, title: g('title'), kind: g('kind'), agentId: g('agentId'), workflowId: g('workflowId'), prompt: g('prompt'),
+        enabled: editingRoutine.enabled !== false,
+        items: [...f.querySelectorAll('.ritem')].map((row) => ({ title: row.querySelector('[data-it="title"]').value, agentId: row.querySelector('[data-it="agentId"]').value })),
+        schedule: { type: g('stype'), time: g('time'), days: [...f.querySelectorAll('[data-day]')].filter((x) => x.checked).map((x) => Number(x.dataset.day)) },
+      };
+      const r = await guard(() => api.saveRoutine(data));
+      if (r) { routines = r; editingRoutine = null; renderRoutines(); toast('已儲存日常任務'); }
+    });
+    syncRoutineForm();
+  }
+
   function renderAll() {
-    renderTask();
+    renderLauncher('t');
+    renderRuns();
     renderAgents();
     renderFlows();
     renderSettings();
@@ -795,10 +1089,9 @@
     renderDev();
   }
   renderAll();
-  setRunning(!!state.running);
   if (api.isPreview) logEntry('system', null, '瀏覽器預覽模式：使用模擬 AI。要串接真的 AI，請用 npm start 以 Electron 執行。');
   checkUpdate(false);
   loadUsage(false);
   renderAskBanners();
-  if (pendingAsk) openAsk(pendingAsk);
+  if (pendingAsks.length) openAsk(pendingAsks[0]);
 })();

@@ -43,27 +43,10 @@
       </nav>
 
       <div class="tab" id="tab-task">
-        <label>協作流程</label>
-        <select id="wfSelect"></select>
-        <p class="hint" id="wfDesc"></p>
-        <div class="chain" id="wfChain"></div>
-        <label>任務內容</label>
-        <textarea id="taskInput" rows="6" placeholder="例如：幫我規劃一個個人記帳 App 的 MVP，並寫出核心資料結構"></textarea>
-        <div class="row">
-          <button class="primary" id="runBtn">開始協作</button>
-          <button id="stopBtn" disabled>停止</button>
-        </div>
-        <label class="chk" style="margin-top:10px"><input type="checkbox" id="clarifyChk" checked /> 開始前讓企劃先追問、確認需求</label>
+        <div class="launcher" data-prefix="t"></div>
         <div class="askbanner-slot"></div>
-        <div class="notebox" id="noteBox" hidden>
-          <label>追加指示（下一位成員開始工作時生效）</label>
-          <div class="row"><input id="noteInput" placeholder="例如：報告改成條列、預算控制在一萬內" /><button id="noteSend">送出</button></div>
-          <ul class="notes" id="noteList"></ul>
-        </div>
-        <div class="result" id="resultBox" hidden>
-          <div class="result-head"><strong>最終結果</strong><button class="ghost" id="openReport">開啟報告檔</button></div>
-          <pre id="resultText"></pre>
-        </div>
+        <div class="runs-head"><h4>任務（可同時進行多個）</h4><button class="ghost" id="clearRuns">清除已結束</button></div>
+        <div class="runlist" id="runList"></div>
       </div>
 
       <div class="tab" id="tab-agents" hidden>
@@ -83,7 +66,7 @@
             <div><label>AI 引擎</label><select name="engine"></select></div>
             <div><label>串接方式</label><select name="mode"><option value="cli">CLI</option><option value="api">API</option></select></div>
             <div><label>模型（可留空）</label><input name="model" placeholder="使用預設" /></div>
-            <div><label>所屬房間</label><select name="room"></select></div>
+            <div><label>所屬部門</label><select name="room"></select></div>
           </div>
           <label>外觀</label>
           <div class="colors">
@@ -147,6 +130,8 @@
         <div class="row"><input id="wsPath" readonly /><button id="wsChoose">選擇</button><button class="ghost" id="wsOpen">開啟</button></div>
         <label>單一步驟逾時（分鐘）</label>
         <input id="timeoutInput" type="number" min="1" max="120" />
+        <label>最多同時進行幾個任務（超過的會排隊）</label>
+        <input id="parallelInput" type="number" min="1" max="8" />
         <h4>API 金鑰</h4>
         <p class="hint">優先讀環境變數；在這裡填的只存在你的電腦（桌面視窗版會額外加密）。</p>
         <div id="keyList"></div>
@@ -172,6 +157,8 @@
 
   <script src="../shared/orchestrator-core.js"></script>
   <script src="../shared/mock-adapter.js"></script>
+  <script src="bridge-common.js"></script>
+  <script src="bridge-electron.js"></script>
   <script src="bridge-http.js"></script>
   <script src="bridge-preview.js"></script>
   <script src="office.js"></script>

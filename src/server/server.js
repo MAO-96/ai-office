@@ -7,6 +7,7 @@ const path = require('path');
 const { spawn } = require('child_process');
 const { createService } = require('../main/service');
 const updater = require('./updater');
+const { buildApi } = require('../main/api');
 
 const ROOT = path.join(__dirname, '..', '..');
 const PORT = Number(process.env.AI_OFFICE_PORT) || 3939;
@@ -95,10 +96,12 @@ function restart() {
 }
 
 const API = {
+  ...buildApi(svc),
   getState: () => ({ ...svc.getState(), version: currentVersion(), updatable: true }),
   checkUpdate: () => updater.check(),
   applyUpdate: async () => {
     if (svc.orchestrator.isRunning()) throw new Error('有任務正在進行，請等任務完成或停止後再更新');
+    if (svc.devStatus && ['clarifying', 'planning', 'implementing', 'testing', 'fixing', 'reviewing', 'publishing', 'preparing'].includes(svc.devStatus().phase)) throw new Error('正在改版，請等改版完成再更新');
     const r = await updater.apply();
     if (r.updated) {
       log(`已更新到 v${r.latest}（${r.files} 個檔案），重新啟動中`);
@@ -107,30 +110,6 @@ const API = {
     }
     return r;
   },
-  saveAgents: (b) => svc.saveAgents(b),
-  saveWorkflows: (b) => svc.saveWorkflows(b),
-  saveEngines: (b) => svc.saveEngines(b),
-  saveSettings: (b) => svc.saveSettings(b),
-  setWorkspace: (b) => svc.setWorkspace(b && b.path),
-  resetConfig: () => svc.resetConfig(),
-  saveKey: (b) => svc.saveKey(b),
-  startRun: (b) => svc.startRun(b),
-  stopRun: () => svc.stopRun(),
-  testAgent: (b) => svc.testAgent(b && b.id),
-  getTasks: () => svc.getTasks(),
-  upsertTask: (b) => svc.upsertTask(b),
-  deleteTask: (b) => svc.deleteTask(b && b.id),
-  upsertProject: (b) => svc.upsertProject(b),
-  deleteProject: (b) => svc.deleteProject(b && b.id),
-  clearDoneProjects: () => svc.clearDoneProjects(),
-  getUsage: (b) => svc.getUsage(b && b.force),
-  answerAsk: (b) => svc.answerAsk(b || {}),
-  addNote: (b) => svc.addNote(b || {}),
-  devStatus: () => svc.devStatus(),
-  devStart: (b) => svc.devStart(b),
-  devPublish: (b) => svc.devPublish(b),
-  devDiscard: () => svc.devDiscard(),
-  devCancel: () => svc.devCancel(),
   listBackups: () => updater.listBackups(),
   rollback: async () => {
     if (svc.orchestrator.isRunning()) throw new Error('有任務正在進行，請先停止');
@@ -140,9 +119,6 @@ const API = {
     setTimeout(restart, 300);
     return r;
   },
-  checkCli: () => svc.checkCli(),
-  openWorkspace: () => svc.openWorkspace(),
-  openFile: (b) => svc.openFile(b && b.file),
 };
 
 // 只接受本機來源，避免其他網站呼叫這個本機服務

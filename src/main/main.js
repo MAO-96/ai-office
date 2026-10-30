@@ -2,6 +2,7 @@
 const path = require('path');
 const { app, BrowserWindow, ipcMain, shell, dialog, safeStorage } = require('electron');
 const { createService } = require('./service');
+const { buildApi } = require('./api');
 
 const ROOT = path.join(__dirname, '..', '..');
 let win = null;
@@ -33,36 +34,19 @@ function createWindow() {
 }
 
 function registerIpc() {
-  const map = {
-    'state:get': () => svc.getState(),
-    'agents:save': (a) => svc.saveAgents(a),
-    'workflows:save': (w) => svc.saveWorkflows(w),
-    'engines:save': (e) => svc.saveEngines(e),
-    'settings:save': (s) => svc.saveSettings(s),
-    'config:reset': () => svc.resetConfig(),
-    'keys:save': (k) => svc.saveKey(k),
-    'run:start': (r) => svc.startRun(r),
-    'run:stop': () => svc.stopRun(),
-    'ask:answer': (b) => svc.answerAsk(b),
-    'note:add': (b) => svc.addNote(b),
-    'agent:test': (id) => svc.testAgent(id),
-    'tasks:get': () => svc.getTasks(),
-    'tasks:upsert': (t) => svc.upsertTask(t),
-    'tasks:delete': (id) => svc.deleteTask(id),
-    'projects:upsert': (p) => svc.upsertProject(p),
-    'projects:delete': (id) => svc.deleteProject(id),
-    'projects:clearDone': () => svc.clearDoneProjects(),
-    'usage:get': (force) => svc.getUsage(force),
-    'cli:check': () => svc.checkCli(),
-    'workspace:open': () => svc.openWorkspace(),
-    'file:open': (f) => svc.openFile(f),
-    'workspace:choose': async () => {
+  const api = {
+    ...buildApi(svc),
+    chooseWorkspace: async () => {
       const r = await dialog.showOpenDialog(win, { properties: ['openDirectory', 'createDirectory'] });
       if (r.canceled || !r.filePaths[0]) return svc.getState();
       return svc.setWorkspace(r.filePaths[0]);
     },
   };
-  for (const [ch, fn] of Object.entries(map)) ipcMain.handle(ch, (_e, arg) => fn(arg));
+  ipcMain.handle('api', async (_e, { name, body }) => {
+    const fn = api[name];
+    if (!fn) return { ok: false, error: `不支援的操作：${name}` };
+    try { return { ok: true, data: await fn(body) }; } catch (e) { return { ok: false, error: e.message || String(e) }; }
+  });
 }
 
 app.whenReady().then(() => {

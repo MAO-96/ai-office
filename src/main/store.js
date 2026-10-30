@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 
 const FILES = ['agents.json', 'engines.json', 'rooms.json', 'workflows.json'];
-const DEFAULT_SETTINGS = { mockMode: true, workspace: '', timeoutMinutes: 10 };
+const DEFAULT_SETTINGS = { mockMode: true, workspace: '', timeoutMinutes: 10, maxParallel: 3 };
 
 function readJson(file, fallback) {
   try { return JSON.parse(fs.readFileSync(file, 'utf8')); } catch (_) { return fallback; }
@@ -26,12 +26,52 @@ function createStore({ userDataDir, defaultsDir, crypto }) {
     const dst = path.join(cfgDir, f);
     if (!fs.existsSync(dst)) fs.copyFileSync(path.join(defaultsDir, f), dst);
   }
-  // 引擎設定改版時（_version 變大）自動套用新版，角色與流程不受影響
-  {
-    const def = readJson(path.join(defaultsDir, 'engines.json'), {});
-    const cur = readJson(path.join(cfgDir, 'engines.json'), {});
-    if ((def._version || 0) > (cur._version || 0)) fs.copyFileSync(path.join(defaultsDir, 'engines.json'), path.join(cfgDir, 'engines.json'));
+  // 引擎與樓層設定改版時（_version 變大）自動套用新版，角色與流程不受影響
+  for (const f of ['engines.json', 'rooms.json']) {
+    const def = readJson(path.join(defaultsDir, f), {});
+    const cur = readJson(path.join(cfgDir, f), {});
+    if ((def._version || 0) > (cur._version || 0)) fs.copyFileSync(path.join(defaultsDir, f), path.join(cfgDir, f));
   }
+  // 角色與流程：使用者沒改過的舊預設值，自動換成新預設（改過的不動）
+  try {
+    const mig = readJson(path.join(defaultsDir, 'migrations.json'), null);
+    if (mig) {
+      const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+      const defAgents = readJson(path.join(defaultsDir, 'agents.json'), []);
+      const curAgents = readJson(path.join(cfgDir, 'agents.json'), []);
+      let changed = false;
+      for (const [id, fields] of Object.entries(mig.agents || {})) {
+        const cur = curAgents.find((x) => x.id === id);
+        const def = defAgents.find((x) => x.id === id);
+        if (!cur || !def) continue;
+        for (const [k, olds] of Object.entries(fields)) {
+          if (olds.some((o) => same(o, cur[k])) && !same(cur[k], def[k])) { cur[k] = def[k]; changed = true; }
+        }
+      }
+      if (changed) writeJson(path.join(cfgDir, 'agents.json'), curAgents);
+      const defWf = readJson(path.join(defaultsDir, 'workflows.json'), []);
+      const curWf = readJson(path.join(cfgDir, 'workflows.json'), []);
+      let wfChanged = false;
+      for (const [id, olds] of Object.entries(mig.workflows || {})) {
+        const i = curWf.findIndex((x) => x.id === id);
+        const def = defWf.find((x) => x.id === id);
+        if (i < 0 || !def) continue;
+        if (olds.some((o) => same(o, curWf[i]))) { curWf[i] = def; wfChanged = true; }
+      }
+      const added = readJson(path.join(userDataDir, 'migrations-done.json'), {});
+      for (const id of mig.addWorkflows || []) {
+        if (added[id] || curWf.some((x) => x.id === id)) continue;
+        const def = defWf.find((x) => x.id === id);
+        const ids = new Set(curAgents.map((a) => a.id));
+        const refs = (def && def.steps || []).flatMap((st) => [st.agent, ...(st.with || [])]);
+        if (def && refs.every((r) => ids.has(r))) { curWf.splice(Math.min(2, curWf.length), 0, def); wfChanged = true; }
+        added[id] = true;
+      }
+      writeJson(path.join(userDataDir, 'migrations-done.json'), added);
+      if (wfChanged) writeJson(path.join(cfgDir, 'workflows.json'), curWf);
+    }
+  } catch (e) { console.error('設定升級失敗', e); }
+
   const p = (f) => path.join(cfgDir, f);
   const settingsFile = path.join(userDataDir, 'settings.json');
   const keysFile = path.join(userDataDir, 'keys.json');
@@ -85,7 +125,8 @@ function createStore({ userDataDir, defaultsDir, crypto }) {
     if (!Array.isArray(wfs)) throw new Error('流程資料格式錯誤');
     const ids = new Set(agents.map((a) => a.id));
     for (const w of wfs) {
-      const refs = w.type === 'meeting' ? [...(w.participants || []), w.moderator].filter(Boolean) : (w.steps || []).map((s) => s.agent);
+      const refs = w.type === 'meeting' ? [...(w.participants || []), w.moderator].filter(Boolean)
+        : (w.steps || []).flatMap((s) => [s.agent, ...(Array.isArray(s.with) ? s.with : [])]);
       for (const r of refs) if (!ids.has(r)) throw new Error(`流程「${w.name}」引用了不存在的角色：${r}`);
     }
   }
@@ -105,12 +146,19 @@ function createStore({ userDataDir, defaultsDir, crypto }) {
     saveEngines(engines) { writeJson(p('engines.json'), engines); cache['engines.json'] = engines; },
     saveSettings(s) { writeJson(settingsFile, { ...getSettings(), ...s }); },
     resetToDefaults() { for (const f of FILES) { fs.copyFileSync(path.join(defaultsDir, f), p(f)); delete cache[f]; } },
+    // 日常任務
+    getRoutines: () => readJson(path.join(userDataDir, 'routines.json'), []),
+    saveRoutines(list) { writeJson(path.join(userDataDir, 'routines.json'), list); },
+    // 任務紀錄（像對話一樣保存最近的任務）
+    getRunHistory: () => readJson(path.join(userDataDir, 'runs.json'), []),
+    saveRunHistory(list) { writeJson(path.join(userDataDir, 'runs.json'), list); },
     saveRunReport(result) {
       const dir = path.join(getWorkspace(), 'runs');
       fs.mkdirSync(dir, { recursive: true });
       const file = path.join(dir, `${result.runId}.md`);
       const body = [
-        `# ${result.workflow.name}`,
+        `# ${result.title || result.workflow.name || '任務'}`,
+        result.workflow.name ? `- 流程：${result.workflow.name}` : '',
         '',
         `- 任務：${result.task}`,
         `- 時間：${new Date().toLocaleString()}`,

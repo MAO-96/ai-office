@@ -1,6 +1,6 @@
 {
   "name": "ai-office",
-  "version": "0.5.0",
+  "version": "0.6.0",
   "description": "避難所剖面風格的 AI 辦公室：多個 AI（Claude / Codex / Gemini / Grok）以角色身分協作任務",
   "main": "src/main/main.js",
   "scripts": {
@@ -19,6 +19,6 @@
       "repo": "MAO-96/ai-office",
       "branch": "main"
     },
-    "notes": "企劃開工前會先追問、確認你要什麼；工作中可隨時追加指示；改版完成後可追加修改"
+    "notes": "可同時進行多個任務；日常任務（定時交辦、協作流程、例行清單）；會議室指揮白板；審查官會質疑並與團隊討論到共識；開放辦公室與日常互動"
   }
 }

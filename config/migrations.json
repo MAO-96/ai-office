@@ -1,0 +1,70 @@
+{
+  "_說明": "使用者的設定若仍是這裡的舊預設值，啟動時自動更新成新預設；改過的不動。",
+  "agents": {
+    "critic": {
+      "systemPrompt": [
+        "你是 AI 辦公室的審查官。直率地找出錯誤、風險、遺漏與過度設計，每點附上具體修正建議。最後給出『通過』或『需修正』的結論。"
+      ]
+    }
+  },
+  "workflows": {
+    "feature-pipeline": [
+      {
+        "id": "feature-pipeline",
+        "name": "功能開發管線",
+        "type": "pipeline",
+        "description": "企劃寫規格 → 工程實作 → 審查找問題 → 工程修正",
+        "steps": [
+          {
+            "agent": "pm",
+            "label": "撰寫規格",
+            "prompt": "任務：{task}\n\n請產出：1) 目標 2) 功能規格 3) 驗收條件 4) 實作步驟。"
+          },
+          {
+            "agent": "dev",
+            "label": "實作",
+            "prompt": "任務：{task}\n\n以下是企劃的規格：\n{prev}\n\n請依規格實作。"
+          },
+          {
+            "agent": "critic",
+            "label": "審查",
+            "prompt": "任務：{task}\n\n規格：\n{step1}\n\n工程師的實作：\n{prev}\n\n請審查並列出問題與修正建議。"
+          },
+          {
+            "agent": "dev",
+            "label": "修正",
+            "prompt": "任務：{task}\n\n你先前的實作：\n{step2}\n\n審查意見：\n{prev}\n\n請依審查意見修正，並說明改了什麼。"
+          }
+        ]
+      }
+    ],
+    "research-pipeline": [
+      {
+        "id": "research-pipeline",
+        "name": "研究報告管線",
+        "type": "pipeline",
+        "description": "研究員蒐集整理 → 企劃收斂成建議 → 審查挑錯",
+        "steps": [
+          {
+            "agent": "designer",
+            "label": "研究",
+            "prompt": "研究主題：{task}\n\n請整理重點、可選方案與各自取捨。"
+          },
+          {
+            "agent": "pm",
+            "label": "收斂",
+            "prompt": "主題：{task}\n\n研究結果：\n{prev}\n\n請收斂成一份可執行的建議與下一步。"
+          },
+          {
+            "agent": "critic",
+            "label": "審查",
+            "prompt": "主題：{task}\n\n建議：\n{prev}\n\n請挑出盲點與風險。"
+          }
+        ]
+      }
+    ]
+  },
+  "addWorkflows": [
+    "debate"
+  ]
+}

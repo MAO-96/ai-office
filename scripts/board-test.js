@@ -5,28 +5,38 @@ const os = require('os');
 const path = require('path');
 const { createService } = require('../src/main/service');
 
+const waitDone = async (svc, runId) => {
+  for (let i = 0; i < 600; i++) {
+    const r = svc.listRuns().find((x) => x.runId === runId);
+    if (r && ['finished', 'failed', 'stopped'].includes(r.status)) return r;
+    await new Promise((res) => setTimeout(res, 100));
+  }
+  throw new Error('等太久');
+};
+
 (async () => {
   const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'ai-office-board-'));
   const events = [];
   const svc = createService({ userDataDir: tmp, defaultsDir: path.join(__dirname, '..', 'config'), crypto: null, openPath: () => {}, emit: (t, d) => events.push([t, d]) });
 
   // 模擬模式跑管線：應建立 1 個專案、4 個任務，結束後全部完成
-  await svc.startRun({ workflowId: 'feature-pipeline', task: '做記帳 App' });
+  await waitDone(svc, svc.startRun({ kind: 'workflow', workflowId: 'feature-pipeline', task: '做記帳 App' }).runId);
   let b = svc.getTasks();
   const proj = b.projects.find((p) => p.source === 'workflow');
   assert.ok(proj && proj.title === '做記帳 App');
   const pts = b.tasks.filter((t) => t.projectId === proj.id);
-  assert.strictEqual(pts.length, 4);
+  assert.strictEqual(pts.length, 3);
+  assert.ok(pts.some((t) => t.title.startsWith('審查討論') && t.note === '已達成共識'));
   assert.ok(pts.every((t) => t.status === 'done' && t.progress === 100));
   assert.strictEqual(proj.status, 'done');
   assert.deepStrictEqual([...new Set(pts.map((t) => t.room))].sort(), ['dev', 'planning', 'review']);
-  console.log('✓ 管線自動建立專案與各處室任務，完成後全部打勾');
+  console.log('✓ 管線自動建立專案與各部門任務（含審查討論），完成後全部打勾');
 
   // 中途停止：目前那一步應變成「卡住」
-  const p = svc.startRun({ workflowId: 'feature-pipeline', task: '測試停止' });
+  const sid = svc.startRun({ kind: 'workflow', workflowId: 'feature-pipeline', task: '測試停止' }).runId;
   await new Promise((r) => setTimeout(r, 1500));
-  svc.stopRun();
-  await p.catch(() => {});
+  svc.stopRun(sid);
+  await waitDone(svc, sid);
   b = svc.getTasks();
   const stopped = b.projects.find((x) => x.title === '測試停止');
   assert.strictEqual(stopped.status, 'blocked');
@@ -34,7 +44,7 @@ const { createService } = require('../src/main/service');
   console.log('✓ 停止後專案顯示卡住，並標出卡在哪一步');
 
   // 會議：每人兩輪，進度 50% → 100%
-  await svc.startRun({ workflowId: 'brainstorm-meeting', task: '下季方向' });
+  await waitDone(svc, svc.startRun({ kind: 'workflow', workflowId: 'brainstorm-meeting', task: '下季方向' }).runId);
   b = svc.getTasks();
   const mp = b.projects.find((x) => x.title === '下季方向');
   const mts = b.tasks.filter((t) => t.projectId === mp.id);
@@ -65,6 +75,15 @@ const { createService } = require('../src/main/service');
   assert.ok(usage.grok && usage.grok.mode === 'api');
   assert.strictEqual(usage.grok.today.calls, 0);
   console.log('✓ 模擬模式不計入用量');
+
+  // 平行：同時開 3 個交辦，應該同時進行
+  const ids = ['pm', 'dev', 'designer'].map((a) => svc.startRun({ kind: 'single', agentId: a, task: `平行測試 ${a}` }).runId);
+  await new Promise((r) => setTimeout(r, 700));
+  assert.strictEqual(svc.listRuns().filter((x) => ids.includes(x.runId) && x.status === 'running').length, 3);
+  await Promise.all(ids.map((id) => waitDone(svc, id)));
+  const conv = svc.getRun(ids[0]);
+  assert.ok(conv.log.some((e) => e.kind === 'output'));
+  console.log('✓ 3 個交辦同時進行，每個都有自己的對話紀錄');
 
   svc.clearDoneProjects();
   assert.ok(svc.getTasks().projects.every((x) => x.status !== 'done'));

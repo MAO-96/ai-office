@@ -8,6 +8,8 @@ const { createOrchestrator } = require('../shared/orchestrator-core');
 const { createTaskBoard } = require('./tasks');
 const { createUsage } = require('./usage');
 const { createDevOps } = require('./devops');
+const { createRunRegistry } = require('./runs');
+const { createRoutines } = require('./routines');
 
 function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
   const store = createStore({ userDataDir, defaultsDir, crypto });
@@ -17,18 +19,49 @@ function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
     getAgents: () => store.getAgents(),
     getWorkflows: () => store.getWorkflows(),
     runAgent: createRunner(store, { usage }),
+    maxParallel: () => store.getSettings().maxParallel || 3,
   });
+  const registry = createRunRegistry({ store, emit, getAgents: () => store.getAgents() });
   orchestrator.on('*', (type, data) => {
     emit(type, data);
+    try { registry.onEvent(type, data); } catch (e) { console.error(e); }
     // 流程進度同步寫進任務板（單一資料來源）
     if (type === 'run') {
-      try { board.onRunEvent(data, store.getWorkflows().find((w) => w.id === data.workflowId)); } catch (e) { console.error(e); }
+      const wf = data.status !== 'started' ? null
+        : data.type === 'single' ? { type: 'single', agent: data.agent, name: data.workflowName }
+          : store.getWorkflows().find((w) => w.id === data.workflowId);
+      try { board.onRunEvent(data, wf); } catch (e) { console.error(e); }
     }
   });
+
+  // 開始一個任務（不等它做完，馬上回傳 runId；可同時開很多個）
+  function startRun({ kind, workflowId, agentId, task, clarify, title, meta } = {}) {
+    let spec;
+    if (kind === 'single') {
+      const a = store.getAgents().find((x) => x.id === agentId);
+      if (!a) throw new Error('請選擇要交辦的員工');
+      spec = { type: 'single', agent: a.id, name: `交辦：${a.name}` };
+    } else {
+      spec = workflowId;
+    }
+    if (!String(task || '').trim()) throw new Error('請輸入任務內容');
+    const runId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
+    orchestrator.run(spec, task, { runId, clarify: !!clarify, title, meta })
+      .then((result) => {
+        const file = store.saveRunReport(result);
+        registry.setFile(runId, file);
+        emit('report', { runId, file, final: result.final });
+        routines.onRunDone(meta, 'finished');
+      })
+      .catch((e) => routines.onRunDone(meta, e && e.stopped ? 'stopped' : 'failed', e && e.message));
+    return { runId };
+  }
+  const routines = createRoutines({ store, board, startRun, emit });
+  routines.startScheduler();
   const realRunner = createRunner(store, { forceReal: true, usage });
   const devops = createDevOps({
     store, board, emit, runner: realRunner, userDataDir,
-    isOrchestratorBusy: () => orchestrator.isRunning(),
+    isOrchestratorBusy: () => false,
     remoteOverride: process.env.AI_OFFICE_DEV_REMOTE || null,
   });
   const testRunner = (agent, prompt, opts) => realRunner(agent, prompt, opts);
@@ -45,9 +78,17 @@ function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
       running: orchestrator.isRunning(),
       tasks: board.snapshot(),
       devops: devops.status(),
-      pendingAsk: orchestrator.pendingAsk() || devops.status().ask || null,
-      notes: orchestrator.notes(),
+      pendingAsks: pendingAsks(),
+      runs: registry.list(),
+      routines: routines.view(),
     };
+  }
+
+  function pendingAsks() {
+    const list = orchestrator.pendingAsks();
+    const d = devops.status().ask;
+    if (d) list.push({ ...d, source: 'devops', runId: 'devops', title: 'AI Office 改版' });
+    return list;
   }
 
   function insideWorkspace(file) {
@@ -67,6 +108,7 @@ function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
       const allowed = {};
       if ('mockMode' in s) allowed.mockMode = !!s.mockMode;
       if ('timeoutMinutes' in s) allowed.timeoutMinutes = Math.max(1, Math.min(120, Number(s.timeoutMinutes) || 10));
+      if ('maxParallel' in s) allowed.maxParallel = Math.max(1, Math.min(8, Number(s.maxParallel) || 3));
       store.saveSettings(allowed);
       return getState();
     },
@@ -78,14 +120,18 @@ function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
     },
     resetConfig() { store.resetToDefaults(); return getState(); },
     saveKey({ name, value }) { store.setKey(name, value); return getState(); },
-    async startRun({ workflowId, task, clarify }) {
-      if (devops.isBusy()) throw new Error('AI Office 正在改版，請等改版完成再開始任務');
-      const result = await orchestrator.run(workflowId, task, { clarify: !!clarify });
-      const file = store.saveRunReport(result);
-      emit('report', { file, final: result.final });
-      return { final: result.final, file };
-    },
-    stopRun() { orchestrator.stop(); return true; },
+    startRun,
+    stopRun(runId) { orchestrator.stop(runId || undefined); return true; },
+    listRuns: () => registry.list(),
+    getRun: (runId) => registry.get(runId),
+    removeRun: (runId) => registry.remove(runId),
+    clearRuns: () => registry.clearFinished(),
+    // 日常任務
+    listRoutines: () => routines.view(),
+    saveRoutine: (r) => routines.upsert(r || {}),
+    deleteRoutine: (id) => routines.remove(id),
+    setRoutineEnabled: ({ id, enabled }) => routines.setEnabled(id, enabled),
+    runRoutineNow: (id) => routines.runNow(id),
     // 任務板
     getTasks: () => board.snapshot(),
     upsertTask: (t) => { board.upsertTask(t); return board.snapshot(); },
@@ -94,13 +140,11 @@ function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
     deleteProject: (id) => { board.deleteProject(id); return board.snapshot(); },
     clearDoneProjects: () => { board.clearDone(); return board.snapshot(); },
     // 追問與追加指示（任務與改版共用）
-    answerAsk: ({ source, answers } = {}) => (source === 'devops' ? devops.answer(answers || null) : orchestrator.answer(answers || null)),
-    addNote: ({ text } = {}) => {
-      const st = devops.status();
-      if (devops.isBusy() || st.phase === 'awaiting') return { devops: devops.addNote(text) };
-      return { notes: orchestrator.addNote(text) };
-    },
-    pendingAsk: () => orchestrator.pendingAsk() || devops.status().ask || null,
+    answerAsk: ({ source, runId, answers } = {}) => (source === 'devops' || runId === 'devops'
+      ? devops.answer(answers || null) : orchestrator.answer(runId, answers || null)),
+    addNote: ({ runId, text } = {}) => (runId === 'devops'
+      ? { devops: devops.addNote(text) } : { runId, notes: orchestrator.addNote(runId, text) }),
+    pendingAsks,
     // 改版
     devStatus: () => devops.status(),
     devStart: (b) => devops.start(b || {}),

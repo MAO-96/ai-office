@@ -187,3 +187,46 @@ button.ghost { background: none; }
 .askq .opts button { font-weight: 400; }
 .askq .opts button.on { background: var(--accent); color: var(--accent-ink); border-color: var(--accent); }
 .askfoot { display: flex; gap: 8px; border-top: 2px solid var(--line); padding-top: 10px; }
+
+/* ---------- 啟動器與平行任務 ---------- */
+.seg { display: grid; grid-template-columns: 1fr 1fr; border: 2px solid var(--line); margin-bottom: 4px; }
+.seg button { border: 0; background: none; color: var(--muted); }
+.seg button.on { background: var(--accent); color: var(--accent-ink); }
+.launcher.wide { max-width: 640px; }
+.runs-head { display: flex; justify-content: space-between; align-items: center; margin-top: 18px; }
+.runs-head h4 { margin: 0; color: var(--accent); }
+.runlist { display: grid; gap: 8px; margin-top: 8px; }
+.rgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 10px; margin-bottom: 12px; }
+.runcard, .rcard { border: 2px solid var(--line); background: var(--panel-2); padding: 8px 10px; cursor: pointer; }
+.rcard { cursor: default; }
+.rcard.off { opacity: 0.55; }
+.runcard:hover { border-color: var(--accent); }
+.runcard.asking { border-color: var(--accent); }
+.runcard.failed { border-color: var(--danger); }
+.rc-top { display: flex; justify-content: space-between; gap: 8px; align-items: baseline; }
+.rc-top b { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.rc-st { font-size: 11px; font-weight: 800; padding: 1px 6px; border: 1px solid var(--line); white-space: nowrap; }
+.rc-st.running { color: #7fb2e8; border-color: #7fb2e8; }
+.rc-st.asking { color: var(--accent-ink); background: var(--accent); border-color: var(--accent); }
+.rc-st.queued { color: var(--muted); }
+.rc-st.finished { color: var(--ok); border-color: var(--ok); }
+.rc-st.failed { color: var(--danger); border-color: var(--danger); }
+.rc-meta { font-size: 11px; color: var(--muted); margin-top: 2px; }
+.rc-step { font-size: 12px; margin-top: 4px; }
+.rc-final { font-size: 12px; color: var(--muted); margin-top: 4px; white-space: pre-wrap; word-break: break-word; max-height: 48px; overflow: hidden; }
+.rc-err { font-size: 12px; color: #ffb4a8; margin-top: 4px; white-space: pre-wrap; word-break: break-word; }
+.rc-tag { display: inline-block; font-size: 10px; padding: 1px 5px; margin: 4px 4px 0 0; border: 1px solid var(--line); color: var(--muted); }
+.rc-tag.ok { color: var(--ok); border-color: var(--ok); }
+.rc-tag.warn { color: var(--accent); border-color: var(--accent); }
+.convo { max-height: 46vh; overflow: auto; border: 2px solid var(--line); padding: 6px 10px; background: var(--bg); margin-bottom: 10px; font-size: 13px; }
+.convo .entry.prompt { display: block; }
+.entry .rtag { display: inline-block; font-size: 10px; padding: 0 5px; margin-right: 6px; border: 1px solid var(--line); color: var(--muted); cursor: pointer; }
+.entry .rtag:hover { color: var(--accent); border-color: var(--accent); }
+.cmdtabs { display: flex; gap: 4px; border-bottom: 2px solid var(--line); margin-bottom: 12px; }
+.cmdtabs button { border: 0; background: none; color: var(--muted); border-bottom: 3px solid transparent; margin-bottom: -2px; }
+.cmdtabs button.on { color: var(--accent); border-bottom-color: var(--accent); }
+.rform { max-width: 680px; }
+.ritems { display: grid; gap: 6px; margin-bottom: 6px; }
+.ritem { display: grid; grid-template-columns: 1fr 180px auto; gap: 6px; }
+.days { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
+.days .chk { margin: 0 !important; }

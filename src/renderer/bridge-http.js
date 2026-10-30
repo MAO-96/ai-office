@@ -1,6 +1,5 @@
 /*
- * 瀏覽器版連線：網址帶 ?mode=server 時，透過本機 server.js 的 HTTP API 與事件串流運作，
- * 提供和 Electron 相同的 window.aiOffice 介面。
+ * 瀏覽器版連線：網址帶 ?mode=server 時，透過本機 server.js 的 HTTP API 與事件串流運作。
  */
 (function () {
   'use strict';
@@ -13,7 +12,7 @@
       headers: { 'content-type': 'application/json', 'x-ai-office': '1' },
       body: JSON.stringify(body === undefined ? null : body),
     });
-    if (!res.ok) throw new Error(`連線失敗（${res.status}），請確認 AI 辦公室的黑色視窗還開著`);
+    if (!res.ok) throw new Error(`連線失敗（${res.status}），請確認 AI Office 還開著`);
     const j = await res.json();
     if (!j.ok) throw new Error(j.error);
     return j.data;
@@ -26,45 +25,17 @@
     try { msg = JSON.parse(e.data); } catch (_) { return; }
     listeners.forEach((cb) => cb(msg.type, msg.data));
   };
+  const onEvent = (cb) => { listeners.push(cb); return () => listeners.splice(listeners.indexOf(cb), 1); };
 
-  window.aiOffice = {
-    isPreview: false,
-    getState: () => call('getState'),
-    saveAgents: (a) => call('saveAgents', a),
-    saveWorkflows: (w) => call('saveWorkflows', w),
-    saveEngines: (e) => call('saveEngines', e),
-    saveSettings: (s) => call('saveSettings', s),
-    resetConfig: () => call('resetConfig'),
-    saveKey: (name, value) => call('saveKey', { name, value }),
-    startRun: (workflowId, task, opts) => call('startRun', { workflowId, task, ...(opts || {}) }),
-    answerAsk: (source, answers) => call('answerAsk', { source, answers }),
-    addNote: (text) => call('addNote', { text }),
-    stopRun: () => call('stopRun'),
-    testAgent: (id) => call('testAgent', { id }),
-    getTasks: () => call('getTasks'),
-    upsertTask: (t) => call('upsertTask', t),
-    deleteTask: (id) => call('deleteTask', { id }),
-    upsertProject: (p) => call('upsertProject', p),
-    deleteProject: (id) => call('deleteProject', { id }),
-    clearDoneProjects: () => call('clearDoneProjects'),
-    getUsage: (force) => call('getUsage', { force }),
-    devStatus: () => call('devStatus'),
-    devStart: (b) => call('devStart', b),
-    devPublish: (b) => call('devPublish', b),
-    devDiscard: () => call('devDiscard'),
-    devCancel: () => call('devCancel'),
-    listBackups: () => call('listBackups'),
-    rollback: () => call('rollback'),
+  window.aiOffice = window.AiOfficeBridge(call, onEvent, {
     checkUpdate: () => call('checkUpdate'),
     applyUpdate: () => call('applyUpdate'),
-    checkCli: () => call('checkCli'),
-    openWorkspace: () => call('openWorkspace'),
-    openFile: (file) => call('openFile', { file }),
+    listBackups: () => call('listBackups'),
+    rollback: () => call('rollback'),
     chooseWorkspace: async () => {
       const p = window.prompt('請輸入工作目錄的完整路徑（不存在會自動建立）：', '');
       if (!p) return call('getState');
       return call('setWorkspace', { path: p.trim() });
     },
-    onEvent: (cb) => { listeners.push(cb); return () => listeners.splice(listeners.indexOf(cb), 1); },
-  };
+  });
 })();

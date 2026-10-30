@@ -59,14 +59,46 @@ const ROOT = path.join(__dirname, '..');
     console.log('✓ CLI 轉接器（stdin 傳遞、找不到指令提示）');
   }
   const args = buildArgs(store.getEngines().codex.cli, { model: 'm1' }, 'p');
-  assert.deepStrictEqual(args, ['exec', '--skip-git-repo-check', '-m', 'm1', '-']);
+  assert.deepStrictEqual(args, ['exec', '--skip-git-repo-check', '-m', 'm1', '--sandbox', 'read-only', '-']);
   console.log('✓ 模型參數插入位置');
+  const E = store.getEngines();
+  const cx = (permission, write) => buildArgs(E.codex.cli, { permission }, 'p', { write }).join(' ');
+  assert.match(cx('workspace'), /--sandbox workspace-write/);
+  assert.match(cx('full'), /--dangerously-bypass-approvals-and-sandbox/);
+  assert.match(cx(undefined, true), /--sandbox workspace-write/); // 改版至少可改檔
+  assert.match(cx('full', true), /--dangerously-bypass/); // 完整權限不會被改版降級
+  assert.deepStrictEqual(buildArgs(E.claude.cli, {}, 'p'), ['-p']);
+  assert.deepStrictEqual(buildArgs(E.claude.cli, { permission: 'full' }, 'p'), ['-p', '--dangerously-skip-permissions']);
+  assert.deepStrictEqual(buildArgs(E.gemini.cli, { permission: 'workspace' }, 'hi'), ['-p', 'hi', '--mode', 'accept-edits', '--print-timeout', '10m']);
+  assert.deepStrictEqual(buildArgs({ args: ['-p', '{writeArgs}'], writeArgs: ['--w'] }, { permission: 'workspace' }, 'p'), ['-p', '--w']); // 舊版設定檔
+  assert.throws(() => store.saveAgents([{ id: 'x', name: 'X', permission: 'root' }]), /權限設定不正確/);
+  console.log('✓ 每位員工各自的權限（唯讀／工作目錄／完整）');
 
   // 金鑰（無加密時明文保存）
   store.setKey('XAI_API_KEY', 'abc');
   assert.strictEqual(store.getKey('XAI_API_KEY'), 'abc');
   assert.strictEqual(store.keyStatus().XAI_API_KEY, process.env.XAI_API_KEY ? 'env' : 'saved');
   console.log('✓ 金鑰儲存');
+
+  // 舊版使用者升級：自動加入資料蒐集員，研究管線若沒改過就換成新版；刪掉後不會再加回來
+  {
+    const old = fs.mkdtempSync(path.join(os.tmpdir(), 'aio-mig-'));
+    const cfg = path.join(old, 'config');
+    fs.mkdirSync(cfg, { recursive: true });
+    const def = (f) => JSON.parse(fs.readFileSync(path.join(ROOT, 'config', f), 'utf8'));
+    const mig = def('migrations.json');
+    fs.writeFileSync(path.join(cfg, 'agents.json'), JSON.stringify(def('agents.json').filter((a) => a.id !== 'collector')));
+    const oldRp = mig.workflows['research-pipeline'].slice(-1)[0];
+    fs.writeFileSync(path.join(cfg, 'workflows.json'), JSON.stringify(def('workflows.json').map((w) => (w.id === 'research-pipeline' ? oldRp : w))));
+    let st = createStore({ userDataDir: old, defaultsDir: path.join(ROOT, 'config') });
+    assert.ok(st.getAgents().some((a) => a.id === 'collector'));
+    assert.strictEqual(st.getWorkflows().find((w) => w.id === 'research-pipeline').steps[0].agent, 'collector');
+    fs.writeFileSync(path.join(cfg, 'agents.json'), JSON.stringify(st.getAgents().filter((a) => a.id !== 'collector')));
+    st = createStore({ userDataDir: old, defaultsDir: path.join(ROOT, 'config') });
+    assert.ok(!st.getAgents().some((a) => a.id === 'collector'));
+    fs.rmSync(old, { recursive: true, force: true });
+    console.log('✓ 升級時自動加入資料蒐集員 Iris，研究管線改由她先蒐集資料');
+  }
 
   fs.rmSync(tmp, { recursive: true, force: true });
   console.log('\n全部通過');

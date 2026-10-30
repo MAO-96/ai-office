@@ -7,21 +7,29 @@ const { spawn, spawnSync } = require('child_process');
 const DEFAULT_TIMEOUT_MS = 10 * 60 * 1000;
 const isWin = process.platform === 'win32';
 
+const LEVELS = ['read', 'workspace', 'full'];
+// 角色權限：read 唯讀、workspace 可改工作目錄、full 完整權限
+function permissionOf(agent, { write = false } = {}) {
+  let lv = LEVELS.includes(agent.permission) ? agent.permission : 'read';
+  if (write && lv === 'read') lv = 'workspace'; // 「改版」流程至少要能改檔案
+  return lv;
+}
 function buildArgs(cli, agent, prompt, { write = false } = {}) {
   const model = (agent.model || '').trim();
   const modelArgs = model ? (cli.modelArgs || []).map((a) => a.replace('{model}', model)) : [];
-  // 只有「改版」流程會開啟寫入權限（例如 Claude 的 acceptEdits、Codex 的 workspace-write）
-  const writeArgs = write ? (cli.writeArgs || []) : [];
+  const lv = permissionOf(agent, { write });
+  // 舊版設定檔只有 writeArgs（改版時用），沒有 permArgs
+  const permArgs = cli.permArgs ? (cli.permArgs[lv] || []) : (lv !== 'read' ? (cli.writeArgs || []) : []);
   const out = [];
   let placedModel = false;
-  let placedWrite = false;
+  let placedPerm = false;
   for (const a of cli.args || []) {
     if (a === '{modelArgs}') { out.push(...modelArgs); placedModel = true; continue; }
-    if (a === '{writeArgs}') { out.push(...writeArgs); placedWrite = true; continue; }
+    if (a === '{permArgs}' || a === '{writeArgs}') { out.push(...permArgs); placedPerm = true; continue; }
     out.push(cli.promptVia === 'arg' ? a.replace('{prompt}', prompt) : a);
   }
   if (!placedModel) out.push(...modelArgs);
-  if (!placedWrite) out.push(...writeArgs);
+  if (!placedPerm) out.push(...permArgs);
   return out;
 }
 
@@ -185,4 +193,4 @@ function checkCommand(command) {
   });
 }
 
-module.exports = { runCli, checkCommand, buildArgs, resolveCommand, spawnResolved };
+module.exports = { permissionOf, LEVELS,  runCli, checkCommand, buildArgs, resolveCommand, spawnResolved };

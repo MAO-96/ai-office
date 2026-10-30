@@ -68,6 +68,15 @@
             <div><label>模型（可留空）</label><input name="model" placeholder="使用預設" /></div>
             <div><label>所屬部門</label><select name="room"></select></div>
           </div>
+          <div class="perm-box" id="permBox">
+            <label>權限（CLI 員工能動到你電腦的範圍）</label>
+            <select name="permission">
+              <option value="read">唯讀（只看、只回答）</option>
+              <option value="workspace">工作目錄（可建立、修改檔案）</option>
+              <option value="full">⚠ 完整權限（整台電腦）</option>
+            </select>
+            <p class="hint" id="permHint"></p>
+          </div>
           <label>外觀</label>
           <div class="colors">
             <span>膚色<input type="color" name="skin" /></span>

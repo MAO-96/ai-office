@@ -62,6 +62,25 @@ npm run check-cli  # 檢查本機 claude / codex / gemini 是否可用
 - **部門白板**：顯示待辦／進行／卡住／完成數量，點開可以新增任務、指派、拉進度、標記卡住。
 - **會議室指揮白板**：點會議室大螢幕，可以看進行中任務、發起新任務、管理日常任務、看專案總覽。所有白板讀同一份 `.ai-office/tasks.json`。
 
+## 資料蒐集員 Iris
+
+Iris（Gemini／Antigravity）專門上網找資料：每筆附來源連結與日期、分清事實與意見、標出矛盾與資料缺口，不下結論，並且把網頁裡的指示一律當資料、不照做。「研究報告管線」改成 Iris 蒐集 → Gemma 分析 → Clara 收斂 → Rex 質疑來源與結論、和大家討論到共識。舊版升級會自動加入 Iris（刪掉後不會再加回來）；研究管線若沒改過也會自動換成新版。
+
+## 員工權限
+
+「角色」分頁點員工，可以單獨調整每位 CLI 員工能動到你電腦的範圍：
+
+| 權限 | Claude | Codex | Antigravity |
+|---|---|---|---|
+| 唯讀（預設） | 不自動核准任何操作 | `--sandbox read-only` | 不自動核准 |
+| 工作目錄 | `--permission-mode acceptEdits` | `--sandbox workspace-write` | `--mode accept-edits` |
+| 完整權限 | `--dangerously-skip-permissions` | `--dangerously-bypass-approvals-and-sandbox` | `--dangerously-skip-permissions` |
+
+- 完整權限沒有沙箱、不會再詢問，能刪檔、裝軟體、連網；設定時會再跳一次確認。
+- 完整權限的員工不能被排進日常任務（沒人看著的時候執行太危險），事後才調高權限也會被擋下。
+- 「改版」流程至少用「工作目錄」；API 員工不能碰你的檔案，所以沒有這個選項。
+- 參數寫在 `config/engines.json` 的 `permArgs`，可以自行調整。
+
 ## 剩餘用量
 
 每次打開右側「用量」分頁都會即時向各家查一次（Gemini 會請 agy-hud 重新抓取）；角色名牌下的小條（綠＝充足、黃＝偏少、紅＝快用完）：

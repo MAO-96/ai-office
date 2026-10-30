@@ -86,7 +86,7 @@
     box.querySelectorAll('.seg button').forEach((b) => b.classList.toggle('on', b.dataset.mode === mode));
     box.querySelectorAll('[data-show]').forEach((el) => { el.hidden = el.dataset.show !== mode; });
     const ag = $(`#${px}Agent`), cur = ag.value;
-    ag.innerHTML = state.agents.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}（${esc(a.title || '')}・${esc(engineOf(a).label)}）</option>`).join('');
+    ag.innerHTML = state.agents.map((a) => `<option value="${esc(a.id)}">${esc(a.name)}（${esc(a.title || '')}・${esc(engineOf(a).label)}${a.mode === 'cli' && a.permission === 'full' ? '・⚠完整權限' : ''}）</option>`).join('');
     if (cur && state.agents.some((a) => a.id === cur)) ag.value = cur;
     const wf = $(`#${px}Wf`), cw = wf.value;
     wf.innerHTML = state.workflows.map((w) => `<option value="${esc(w.id)}">${esc(w.name)}（${w.type === 'meeting' ? '會議' : '管線'}）</option>`).join('');
@@ -277,13 +277,20 @@
     window.drawCharacter(c, canvas.width / 2, canvas.height - px * 2, look, { px, facing: 1, t: 0 });
   }
 
+  const PERM_LABEL = { read: '唯讀', workspace: '可改檔案', full: '完整權限' };
+  const permOf = (a) => (a.mode === 'cli' && PERM_LABEL[a.permission] ? a.permission : 'read');
+  function permBadge(a) {
+    if (a.mode !== 'cli') return '';
+    const p = permOf(a);
+    return p === 'read' ? '' : ` <span class="perm-badge ${p}">${PERM_LABEL[p]}</span>`;
+  }
   function renderAgents() {
     $('#agentList').innerHTML = state.agents.map((a) => {
       const e = engineOf(a);
       return `<div class="agent-card${a.id === editingId ? ' sel' : ''}" data-id="${esc(a.id)}">
         <canvas width="44" height="48"></canvas>
         <div><div><b>${esc(a.name)}</b>　${esc(a.title || '')}</div>
-        <div class="meta">${esc(roomName(a.room))} · ${a.mode === 'cli' ? 'CLI' : 'API'}${a.model ? ' · ' + esc(a.model) : ''}</div></div>
+        <div class="meta">${esc(roomName(a.room))} · ${a.mode === 'cli' ? 'CLI' : 'API'}${a.model ? ' · ' + esc(a.model) : ''}${permBadge(a)}</div></div>
         <span class="eng" style="background:${esc(e.color)}">${esc(e.label)}</span>
         ${testResults[a.id] ? `<div class="test ${testResults[a.id].cls}">${esc(testResults[a.id].msg)}</div>` : ''}</div>`;
     }).join('');
@@ -345,6 +352,7 @@
     F.id.readOnly = !!id;
     ['name', 'title', 'engine', 'mode', 'model', 'room', 'systemPrompt'].forEach((k) => { F[k].value = a[k] || ''; });
     ['skin', 'hair', 'shirt', 'pants'].forEach((k) => { F[k].value = (a.look && a.look[k]) || '#888888'; });
+    F.permission.value = PERM_LABEL[a.permission] ? a.permission : 'read';
     $('#deleteAgent').hidden = !id;
     syncModeOptions();
     updatePreview();
@@ -353,13 +361,28 @@
     form.scrollIntoView({ block: 'nearest' });
   }
 
+  const PERM_HINT = {
+    read: '最安全。適合研究、企劃、審查這類只需要讀和寫報告的員工（報告由 AI Office 自己存檔）。',
+    workspace: '只能動工作目錄裡的檔案，適合寫程式、產出文件的員工。「改版」流程至少會用這一級。',
+    full: '⚠ 等同把你的電腦交給這位員工：沒有沙箱、不會再問你，可以刪檔、裝軟體、上網。任務內容如果包含網頁或外部文件，裡面藏的惡意指令也可能被照做。完整權限的員工不能被排進日常任務。',
+  };
+  function syncPerm() {
+    const isCli = F.mode.value === 'cli';
+    $('#permBox').hidden = !isCli;
+    const p = F.permission.value;
+    $('#permBox').classList.toggle('full', p === 'full');
+    $('#permHint').textContent = PERM_HINT[p];
+    $('#permHint').classList.toggle('warn', p === 'full');
+  }
+  F.permission.addEventListener('change', syncPerm);
   function syncModeOptions() {
     const eng = state.engines[F.engine.value];
     const cliOpt = F.mode.querySelector('option[value="cli"]');
     cliOpt.disabled = !(eng && eng.cli);
     if (cliOpt.disabled) F.mode.value = 'api';
+    syncPerm();
     if (F.mode.value === 'cli') {
-      $('#modeHint').textContent = `CLI：執行本機的「${eng.cli.command}」，使用你已登入的帳號，能在工作目錄讀寫檔案。`;
+      $('#modeHint').textContent = `CLI：執行本機的「${eng.cli.command}」，使用你已登入的帳號。能動到的範圍看下面的「權限」。`;
     } else {
       const m = eng && eng.api ? (eng.api.defaultModel || '（未設定，請填模型）') : '';
       $('#modeHint').textContent = eng && eng.api ? `API：呼叫 ${eng.api.provider}，金鑰 ${eng.api.keyEnv}，預設模型 ${m}。` : '';
@@ -381,7 +404,11 @@
       engine: F.engine.value, mode: F.mode.value, model: F.model.value.trim(), room: F.room.value,
       look: { skin: F.skin.value, hair: F.hair.value, shirt: F.shirt.value, pants: F.pants.value },
       systemPrompt: F.systemPrompt.value,
+      permission: F.mode.value === 'cli' ? F.permission.value : 'read',
     };
+    const prev = state.agents.find((a) => a.id === editingId);
+    if (data.permission === 'full' && (!prev || prev.permission !== 'full')
+      && !confirm(`確定要給「${data.name}」完整權限？\n\n他將可以在你的電腦上執行任何指令、修改或刪除任何檔案、自由連網，而且不會再詢問你。\n建議只給需要的員工，並避免讓他處理來路不明的網頁或文件。`)) return;
     const agents = state.agents.slice();
     const idx = agents.findIndex((a) => a.id === (editingId || data.id));
     if (!editingId && idx >= 0) { toast('ID 已存在', true); return; }
@@ -999,7 +1026,7 @@
   }
   function routineFormHTML(r) {
     const s = r.schedule || {};
-    const agentOpts = (sel) => state.agents.map((a) => `<option value="${esc(a.id)}"${a.id === sel ? ' selected' : ''}>${esc(a.name)}（${esc(a.title || '')}）</option>`).join('');
+    const agentOpts = (sel) => state.agents.map((a) => `<option value="${esc(a.id)}"${a.id === sel ? ' selected' : ''}>${esc(a.name)}（${esc(a.title || '')}）${a.mode === 'cli' && a.permission === 'full' ? '（完整權限，不可排程）' : ''}</option>`).join('');
     const items = (r.items && r.items.length ? r.items : [{ title: '', agentId: '' }]);
     return `<div class="rform">
       <div class="grid2">

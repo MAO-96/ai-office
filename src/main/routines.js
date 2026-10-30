@@ -48,7 +48,24 @@ function createRoutines({ store, board, startRun, emit, now = () => new Date() }
     return list.map((r) => ({ ...r, scheduleText: describe(r), nextRunAt: nextRunAt(r, now()) }));
   }
 
+  // 日常任務沒人在旁邊看，不能交給完整權限的員工
+  function involved(r) {
+    if (r.kind === 'single') return [r.agentId];
+    if (r.kind === 'checklist') return (r.items || []).map((it) => it.agentId);
+    const w = store.getWorkflows().find((x) => x.id === r.workflowId);
+    if (!w) return [];
+    return w.type === 'meeting' ? [...(w.participants || []), w.moderator].filter(Boolean)
+      : (w.steps || []).flatMap((s) => [s.agent, ...(Array.isArray(s.with) ? s.with : [])]);
+  }
+  function checkPermissions(r) {
+    const agents = store.getAgents();
+    const full = [...new Set(involved(r))].map((id) => agents.find((a) => a.id === id))
+      .filter((a) => a && a.mode === 'cli' && a.permission === 'full');
+    if (full.length) throw new Error(`日常任務會在沒人看著時自動執行，不能交給完整權限的員工：${full.map((a) => a.name).join('、')}。請改用其他員工，或把他的權限調低。`);
+  }
+
   function validate(r) {
+    checkPermissions(r);
     const agents = store.getAgents();
     const has = (id) => agents.some((a) => a.id === id);
     if (!String(r.title || '').trim()) throw new Error('請輸入日常任務名稱');
@@ -105,6 +122,7 @@ function createRoutines({ store, board, startRun, emit, now = () => new Date() }
   }
 
   function trigger(r, reason) {
+    checkPermissions(r); // 權限可能在設定之後才被調高
     r.lastRunAt = now().toISOString();
     r.runs = (r.runs || 0) + 1;
     r.lastStatus = 'started';
@@ -141,6 +159,7 @@ function createRoutines({ store, board, startRun, emit, now = () => new Date() }
       if (!due || t < due) continue;
       if (r.lastRunAt && Date.parse(r.lastRunAt) >= due.getTime()) continue;
       try { trigger(r, 'schedule'); } catch (e) {
+        r.lastRunAt = t.toISOString(); // 今天不再重試，避免每 30 秒報錯一次
         r.lastStatus = 'error';
         r.lastError = e.message;
         save();

@@ -48,6 +48,16 @@ function createStore({ userDataDir, defaultsDir, crypto }) {
           if (olds.some((o) => same(o, cur[k])) && !same(cur[k], def[k])) { cur[k] = def[k]; changed = true; }
         }
       }
+      // 新增的預設員工：只加一次，使用者刪掉後不會再加回來
+      const addedAgents = readJson(path.join(userDataDir, 'migrations-done.json'), {});
+      for (const id of mig.addAgents || []) {
+        const key = 'agent:' + id;
+        if (addedAgents[key]) continue;
+        addedAgents[key] = true;
+        const def = defAgents.find((x) => x.id === id);
+        if (def && !curAgents.some((x) => x.id === id)) { curAgents.push(def); changed = true; }
+      }
+      writeJson(path.join(userDataDir, 'migrations-done.json'), addedAgents);
       if (changed) writeJson(path.join(cfgDir, 'agents.json'), curAgents);
       const defWf = readJson(path.join(defaultsDir, 'workflows.json'), []);
       const curWf = readJson(path.join(cfgDir, 'workflows.json'), []);
@@ -56,7 +66,9 @@ function createStore({ userDataDir, defaultsDir, crypto }) {
         const i = curWf.findIndex((x) => x.id === id);
         const def = defWf.find((x) => x.id === id);
         if (i < 0 || !def) continue;
-        if (olds.some((o) => same(o, curWf[i]))) { curWf[i] = def; wfChanged = true; }
+        const known = new Set(curAgents.map((a) => a.id));
+        const refs = (def.steps || []).flatMap((st) => [st.agent, ...(st.with || [])]);
+        if (olds.some((o) => same(o, curWf[i])) && refs.every((r) => known.has(r))) { curWf[i] = def; wfChanged = true; }
       }
       const added = readJson(path.join(userDataDir, 'migrations-done.json'), {});
       for (const id of mig.addWorkflows || []) {
@@ -119,6 +131,7 @@ function createStore({ userDataDir, defaultsDir, crypto }) {
       if (ids.has(a.id)) throw new Error(`角色 ID 重複：${a.id}`);
       ids.add(a.id);
       if (!a.name) throw new Error(`角色 ${a.id} 缺少名字`);
+      if (a.permission != null && !['read', 'workspace', 'full'].includes(a.permission)) throw new Error(`角色 ${a.name} 的權限設定不正確`);
     }
   }
   function validateWorkflows(wfs, agents) {

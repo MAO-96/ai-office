@@ -61,10 +61,41 @@
             "prompt": "主題：{task}\n\n建議：\n{prev}\n\n請挑出盲點與風險。"
           }
         ]
+      },
+      {
+        "id": "research-pipeline",
+        "name": "研究報告管線",
+        "type": "pipeline",
+        "description": "研究員蒐集整理 → 企劃收斂 → 審查官挑戰盲點，與企劃、研究員討論到共識",
+        "steps": [
+          {
+            "agent": "designer",
+            "label": "研究",
+            "prompt": "研究主題：{task}\n\n請整理重點、可選方案與各自取捨。"
+          },
+          {
+            "agent": "pm",
+            "label": "收斂",
+            "prompt": "主題：{task}\n\n研究結果：\n{prev}\n\n請收斂成一份可執行的建議與下一步。"
+          },
+          {
+            "type": "review",
+            "agent": "critic",
+            "label": "審查討論",
+            "with": [
+              "pm",
+              "designer"
+            ],
+            "maxRounds": 3
+          }
+        ]
       }
     ]
   },
   "addWorkflows": [
     "debate"
+  ],
+  "addAgents": [
+    "collector"
   ]
 }

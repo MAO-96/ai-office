@@ -85,6 +85,18 @@ const waitDone = async (svc, runId) => {
   assert.ok(conv.log.some((e) => e.kind === 'output'));
   console.log('✓ 3 個交辦同時進行，每個都有自己的對話紀錄');
 
+  // 完整權限的員工不能排進日常任務
+  const ag = svc.getState().agents.map((a) => (a.id === 'dev' ? { ...a, permission: 'full' } : a));
+  svc.saveAgents(ag);
+  assert.throws(() => svc.saveRoutine({ title: '每日', kind: 'single', agentId: 'dev', prompt: 'x', schedule: { type: 'daily', time: '09:00' } }), /完整權限/);
+  assert.throws(() => svc.saveRoutine({ title: '每週', kind: 'workflow', workflowId: 'feature-pipeline', prompt: 'x', schedule: { type: 'manual' } }), /Cody/);
+  svc.saveRoutine({ title: '研究', kind: 'single', agentId: 'designer', prompt: 'x', schedule: { type: 'manual' } });
+  svc.saveAgents(ag.map((a) => ({ ...a, permission: a.id === 'designer' ? 'full' : 'read' })));
+  const rid = svc.listRoutines()[0].id;
+  assert.throws(() => svc.runRoutineNow(rid), /完整權限/);
+  svc.saveAgents(ag.map((a) => ({ ...a, permission: 'read' })));
+  console.log('✓ 完整權限的員工不能被排進日常任務（事後調高也擋得住）');
+
   svc.clearDoneProjects();
   assert.ok(svc.getTasks().projects.every((x) => x.status !== 'done'));
   console.log('✓ 清除已完成專案');

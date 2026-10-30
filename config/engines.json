@@ -1,6 +1,6 @@
 {
-  "_version": 8,
-  "_說明": "每個引擎可同時有 cli 與 api 兩種接法，角色的 mode 決定用哪一種。cli.promptVia 為 stdin 時提示詞從標準輸入送入（跨平台最穩，Windows 也不會因換行或引號出錯）；為 arg 時把 args 裡的 {prompt} 換成提示詞。角色有填 model 時會加上 modelArgs。API 的 defaultModel 若為空，請到各家官方文件查目前模型 ID 後填入，或在角色設定直接填 model。 args 裡可放 {modelArgs} 指定模型參數插入位置，沒放就接在最後。 cli.env 可設定執行該 CLI 時額外的環境變數。 writeArgs 只在「改版」流程讓 AI 修改程式碼時加上。",
+  "_version": 9,
+  "_說明": "每個引擎可同時有 cli 與 api 兩種接法，角色的 mode 決定用哪一種。cli.promptVia 為 stdin 時提示詞從標準輸入送入（跨平台最穩，Windows 也不會因換行或引號出錯）；為 arg 時把 args 裡的 {prompt} 換成提示詞。角色有填 model 時會加上 modelArgs。API 的 defaultModel 若為空，請到各家官方文件查目前模型 ID 後填入，或在角色設定直接填 model。 args 裡可放 {modelArgs} 指定模型參數插入位置，沒放就接在最後。 cli.env 可設定執行該 CLI 時額外的環境變數。 permArgs 依角色的「權限」加上對應參數：read 唯讀、workspace 可改工作目錄、full 完整權限（可在整台電腦執行任何指令）。args 裡的 {permArgs} 是插入位置，沒放就接在最後。「改版」流程至少會用 workspace。",
   "claude": {
     "label": "Claude",
     "color": "#d97757",
@@ -8,7 +8,7 @@
       "command": "claude",
       "args": [
         "-p",
-        "{writeArgs}"
+        "{permArgs}"
       ],
       "promptVia": "stdin",
       "modelArgs": [
@@ -17,10 +17,16 @@
       ],
       "install": "irm https://claude.ai/install.ps1 | iex",
       "quotaHint": "Claude 方案用量有時間窗限制，請等額度重置後再試。",
-      "writeArgs": [
-        "--permission-mode",
-        "acceptEdits"
-      ]
+      "permArgs": {
+        "read": [],
+        "workspace": [
+          "--permission-mode",
+          "acceptEdits"
+        ],
+        "full": [
+          "--dangerously-skip-permissions"
+        ]
+      }
     },
     "api": {
       "provider": "anthropic",
@@ -37,7 +43,7 @@
         "exec",
         "--skip-git-repo-check",
         "{modelArgs}",
-        "{writeArgs}",
+        "{permArgs}",
         "-"
       ],
       "promptVia": "stdin",
@@ -47,10 +53,19 @@
       ],
       "install": "npm install -g @openai/codex",
       "quotaHint": "ChatGPT 方案的 Codex 用量有時間窗限制，請等額度重置，或到 ChatGPT 設定查看用量。",
-      "writeArgs": [
-        "--sandbox",
-        "workspace-write"
-      ]
+      "permArgs": {
+        "read": [
+          "--sandbox",
+          "read-only"
+        ],
+        "workspace": [
+          "--sandbox",
+          "workspace-write"
+        ],
+        "full": [
+          "--dangerously-bypass-approvals-and-sandbox"
+        ]
+      }
     },
     "api": {
       "provider": "openai",
@@ -67,6 +82,7 @@
         "-p",
         "{prompt}",
         "{modelArgs}",
+        "{permArgs}",
         "--print-timeout",
         "10m"
       ],
@@ -77,7 +93,17 @@
       ],
       "install": "irm https://antigravity.google/cli/install.ps1 | iex",
       "quotaHint": "Antigravity 的用量依你的 Google AI 方案而定，請等額度重置，或到 Google 帳號查看方案用量。",
-      "_註": "Google 已於 2026-06 停止 Gemini CLI 的個人帳號登入，改用 Antigravity CLI（agy）。"
+      "_註": "Google 已於 2026-06 停止 Gemini CLI 的個人帳號登入，改用 Antigravity CLI（agy）。",
+      "permArgs": {
+        "read": [],
+        "workspace": [
+          "--mode",
+          "accept-edits"
+        ],
+        "full": [
+          "--dangerously-skip-permissions"
+        ]
+      }
     },
     "api": {
       "provider": "gemini",

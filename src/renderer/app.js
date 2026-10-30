@@ -63,6 +63,82 @@
     try { if (v === undefined) return localStorage.getItem('aiOffice.' + k); localStorage.setItem('aiOffice.' + k, v); } catch (_) { /* 無儲存空間 */ }
     return null;
   }
+  // 追加指示帶附件時只顯示開頭與附件名稱
+  function noteShort(n) {
+    const s = String(n);
+    const i = s.indexOf('【附件】');
+    if (i < 0) return s.length > 300 ? s.slice(0, 300) + '…' : s;
+    const names = (s.slice(i).match(/^\d+\. (.+?)（/gm) || []).map((x) => x.replace(/^\d+\. /, '').replace(/（$/, ''));
+    return `${s.slice(0, i).trim()}　📎 ${names.join('、')}`;
+  }
+  // ---------- 附件 ----------
+  const attState = {}; // px -> [{ key, id, name, kind, size, readable, uploading, error }]
+  const ATT_ICON = { image: '🖼', pdf: '📕', office: '📄', file: '📎' };
+  function attachHTML(px) {
+    return `<div class="attach" id="${px}Att">
+      <div class="row"><button type="button" class="ghost" id="${px}AttBtn">📎 夾帶檔案</button>
+      <span class="hint">也可以把檔案拖進來，或在輸入框貼上截圖</span></div>
+      <input type="file" multiple hidden id="${px}AttInput" />
+      <div class="att-list" id="${px}AttList"></div></div>`;
+  }
+  function fmtSize(n) { return n >= 1048576 ? `${(n / 1048576).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`; }
+  function renderAtt(px) {
+    const el = document.getElementById(`${px}AttList`);
+    if (!el) return;
+    el.innerHTML = (attState[px] || []).map((a) => `<span class="att${a.error ? ' bad' : ''}" title="${esc(a.error || (a.readable ? '內容會直接放進提示詞' : a.kind === 'image' || a.kind === 'pdf' ? 'CLI 員工會自己開檔來看；API 員工看不到' : ''))}">
+      ${ATT_ICON[a.kind] || '📎'} ${esc(a.name)} <small>${a.uploading ? '上傳中…' : a.error ? '失敗' : fmtSize(a.size)}</small>
+      <button type="button" data-key="${a.key}" aria-label="移除">✕</button></span>`).join('');
+    el.querySelectorAll('button[data-key]').forEach((b) => b.addEventListener('click', () => {
+      attState[px] = (attState[px] || []).filter((x) => String(x.key) !== b.dataset.key);
+      renderAtt(px);
+    }));
+  }
+  const readB64 = (file) => new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).split(',')[1] || '');
+    r.onerror = () => rej(new Error('讀不到檔案'));
+    r.readAsDataURL(file);
+  });
+  async function addFiles(px, files) {
+    attState[px] = attState[px] || [];
+    for (const f of files) {
+      const item = { key: Date.now() + Math.random(), name: f.name || `截圖-${new Date().toLocaleTimeString('zh-TW', { hour12: false }).replace(/:/g, '')}.png`, size: f.size, kind: /^image\//.test(f.type) ? 'image' : 'file', uploading: true };
+      attState[px].push(item);
+      renderAtt(px);
+      try {
+        if (f.size > 20 * 1024 * 1024) throw new Error('檔案太大，上限 20 MB');
+        Object.assign(item, await api.uploadAttachment(item.name, await readB64(f)), { uploading: false });
+      } catch (e) {
+        Object.assign(item, { uploading: false, error: e.message });
+        toast(`「${item.name}」上傳失敗：${e.message}`, true);
+      }
+      renderAtt(px);
+    }
+  }
+  function attIds(px) {
+    const list = attState[px] || [];
+    if (list.some((a) => a.uploading)) throw new Error('附件還在上傳，請稍等');
+    return list.filter((a) => a.id && !a.error).map((a) => a.id);
+  }
+  function bindAttach(px, dropZone, pasteTarget) {
+    const input = document.getElementById(`${px}AttInput`);
+    document.getElementById(`${px}AttBtn`).addEventListener('click', () => input.click());
+    input.addEventListener('change', () => { addFiles(px, [...input.files]); input.value = ''; });
+    dropZone.addEventListener('dragover', (e) => { if ([...e.dataTransfer.types].includes('Files')) { e.preventDefault(); dropZone.classList.add('dropping'); } });
+    dropZone.addEventListener('dragleave', (e) => { if (!dropZone.contains(e.relatedTarget)) dropZone.classList.remove('dropping'); });
+    dropZone.addEventListener('drop', (e) => {
+      if (!e.dataTransfer.files.length) return;
+      e.preventDefault();
+      dropZone.classList.remove('dropping');
+      addFiles(px, [...e.dataTransfer.files]);
+    });
+    if (pasteTarget) pasteTarget.addEventListener('paste', (e) => {
+      const files = [...(e.clipboardData && e.clipboardData.files || [])];
+      if (files.length) { e.preventDefault(); addFiles(px, files); }
+    });
+    renderAtt(px);
+  }
+
   function launcherHTML(px) {
     return `
       <div class="seg">
@@ -74,6 +150,7 @@
         <p class="hint" id="${px}WfDesc"></p><div class="chain" id="${px}WfChain"></div></div>
       <label>任務內容</label>
       <textarea id="${px}Task" rows="5" placeholder="例如：幫我規劃一個個人記帳 App 的 MVP，並寫出核心資料結構"></textarea>
+      ${attachHTML(px)}
       <label class="chk" style="margin-top:8px"><input type="checkbox" id="${px}Clarify" /> 開始前先追問、確認需求</label>
       <div class="row"><button class="primary" id="${px}Run">開始（另開一個任務）</button></div>`;
   }
@@ -103,14 +180,19 @@
     }));
     $(`#${px}Wf`).addEventListener('change', () => renderChain(px));
     $(`#${px}Clarify`).addEventListener('change', (e) => prefs('clarify', e.target.checked ? '1' : '0'));
+    bindAttach(px, box, $(`#${px}Task`));
     $(`#${px}Run`).addEventListener('click', async () => {
       const task = $(`#${px}Task`).value.trim();
-      if (!task) { toast('請先輸入任務內容', true); return; }
+      let attachments;
+      try { attachments = attIds(px); } catch (e) { toast(e.message, true); return; }
+      if (!task && !attachments.length) { toast('請先輸入任務內容', true); return; }
       const r = await guard(() => api.startRun({
-        kind: launchMode[px], agentId: $(`#${px}Agent`).value, workflowId: $(`#${px}Wf`).value, task, clarify: $(`#${px}Clarify`).checked,
+        kind: launchMode[px], agentId: $(`#${px}Agent`).value, workflowId: $(`#${px}Wf`).value, task, clarify: $(`#${px}Clarify`).checked, attachments,
       }));
       if (r) {
         $(`#${px}Task`).value = '';
+        attState[px] = [];
+        renderAtt(px);
         toast('任務已開始，可以繼續交辦下一件');
         if (px === 'w') openCommand('live');
       }
@@ -178,6 +260,7 @@
   // 任務對話視窗
   let runView = null;
   async function openRun(runId) {
+    attState.rm = []; // 換一個任務，追加指示的附件清空
     const d = await guard(() => api.getRun(runId));
     if (!d) return;
     modalView = { kind: 'run', runId };
@@ -204,7 +287,8 @@
       ${d.asking && d.ask ? `<button class="askbanner" id="rmAsk">${esc(d.ask.agentName)} 有 ${d.ask.questions.length} 個問題等你回答 ▸</button>` : ''}
       ${live ? `<div class="notebox"><label>追加指示（下一位成員開始工作時生效）</label>
           <div class="row"><input id="rmNote" placeholder="例如：報告改成條列、預算控制在一萬內" /><button id="rmNoteSend">送出</button></div>
-          <ul class="notes">${(d.notes || []).map((n) => `<li>${esc(n)}</li>`).join('')}</ul></div>
+          ${attachHTML('rm')}
+          <ul class="notes">${(d.notes || []).map((n) => `<li>${esc(noteShort(n))}</li>`).join('')}</ul></div>
           <div class="row"><button class="danger" id="rmStop">停止這個任務</button></div>`
         : `<div class="row"><button id="rmAgain">用同樣內容再開一次</button><button class="ghost" id="rmRemove">刪除這筆紀錄</button></div>`}`;
     if ($('#rmNote')) $('#rmNote').value = keepNote;
@@ -213,11 +297,14 @@
     const on = (id, fn) => { const el = document.getElementById(id); if (el) el.addEventListener('click', fn); };
     on('rmReport', () => api.openFile(d.file));
     on('rmAsk', () => openAsk(pendingAsks.find((x) => x.runId === d.runId) || { source: 'run', runId: d.runId, ...d.ask }));
+    if ($('#rmAttBtn')) bindAttach('rm', $('#modalBody .notebox'), $('#rmNote'));
     const sendRunNote = async () => {
       const text = $('#rmNote').value.trim();
-      if (!text) return;
-      const r = await guard(() => api.addNote(d.runId, text));
-      if (r) { $('#rmNote').value = ''; d.notes = r.notes; renderRunModal(); toast('已追加，下一位成員開始時生效'); }
+      let files;
+      try { files = attIds('rm'); } catch (e) { toast(e.message, true); return; }
+      if (!text && !files.length) return;
+      const r = await guard(() => api.addNote(d.runId, text, files));
+      if (r) { $('#rmNote').value = ''; attState.rm = []; d.notes = r.notes; renderRunModal(); toast('已追加，下一位成員開始時生效'); }
     };
     on('rmNoteSend', sendRunNote);
     if ($('#rmNote')) $('#rmNote').addEventListener('keydown', (e) => { if (e.key === 'Enter') sendRunNote(); });

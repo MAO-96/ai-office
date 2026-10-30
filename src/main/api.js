@@ -18,6 +18,7 @@ function buildApi(svc) {
     clearRuns: () => svc.clearRuns(),
     answerAsk: (b) => svc.answerAsk(b || {}),
     addNote: (b) => svc.addNote(b || {}),
+    uploadAttachment: (b) => svc.uploadAttachment(b || {}),
     // 日常任務
     listRoutines: () => svc.listRoutines(),
     saveRoutine: (b) => svc.saveRoutine(b),

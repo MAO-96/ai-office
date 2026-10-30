@@ -63,6 +63,7 @@
       case 'removeRun': runs.delete(b.runId); return [...runs.values()].reverse();
       case 'clearRuns': [...runs.keys()].forEach((k) => { if (['finished', 'failed', 'stopped'].includes(runs.get(k).status)) runs.delete(k); }); return [...runs.values()].reverse();
       case 'answerAsk': return orch.answer(b.runId, b.answers || null);
+      case 'uploadAttachment': return { id: 'preview/' + b.name, name: b.name, kind: 'file', size: Math.round((b.data || '').length * 0.75), readable: false };
       case 'addNote': return { runId: b.runId, notes: orch.addNote(b.runId, b.text) };
       case 'listRoutines': return [];
       case 'getTasks': case 'deleteTask': case 'deleteProject': case 'clearDoneProjects': return { projects: [], tasks: [] };

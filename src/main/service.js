@@ -9,6 +9,7 @@ const { createTaskBoard } = require('./tasks');
 const { createUsage } = require('./usage');
 const { createDevOps } = require('./devops');
 const { createRunRegistry } = require('./runs');
+const { createAttachments } = require('./attachments');
 const { createRoutines } = require('./routines');
 
 function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
@@ -35,7 +36,8 @@ function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
   });
 
   // 開始一個任務（不等它做完，馬上回傳 runId；可同時開很多個）
-  function startRun({ kind, workflowId, agentId, task, clarify, title, meta } = {}) {
+  const attachments = createAttachments({ getWorkspace: () => store.getWorkspace() });
+  function startRun({ kind, workflowId, agentId, task, clarify, title, meta, attachments: files } = {}) {
     let spec;
     if (kind === 'single') {
       const a = store.getAgents().find((x) => x.id === agentId);
@@ -44,7 +46,12 @@ function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
     } else {
       spec = workflowId;
     }
-    if (!String(task || '').trim()) throw new Error('請輸入任務內容');
+    if (!String(task || '').trim() && !(files || []).length) throw new Error('請輸入任務內容');
+    if (!String(task || '').trim()) task = '請閱讀附件並整理重點';
+    if ((files || []).length) {
+      title = title || String(task).split('\n')[0].slice(0, 60);
+      task = attachments.withAttachments(task, files);
+    }
     const runId = 'r' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
     orchestrator.run(spec, task, { runId, clarify: !!clarify, title, meta })
       .then((result) => {
@@ -142,8 +149,11 @@ function createService({ userDataDir, defaultsDir, crypto, openPath, emit }) {
     // 追問與追加指示（任務與改版共用）
     answerAsk: ({ source, runId, answers } = {}) => (source === 'devops' || runId === 'devops'
       ? devops.answer(answers || null) : orchestrator.answer(runId, answers || null)),
-    addNote: ({ runId, text } = {}) => (runId === 'devops'
-      ? { devops: devops.addNote(text) } : { runId, notes: orchestrator.addNote(runId, text) }),
+    uploadAttachment: (b) => attachments.save(b || {}),
+    addNote: ({ runId, text, attachments: files } = {}) => {
+      if ((files || []).length) text = attachments.withAttachments(text || '請參考附件', files);
+      return runId === 'devops' ? { devops: devops.addNote(text) } : { runId, notes: orchestrator.addNote(runId, text) };
+    },
     pendingAsks,
     // 改版
     devStatus: () => devops.status(),

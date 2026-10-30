@@ -236,3 +236,14 @@ button.ghost { background: none; }
 .ritem { display: grid; grid-template-columns: 1fr 180px auto; gap: 6px; }
 .days { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 8px; }
 .days .chk { margin: 0 !important; }
+
+/* 附件 */
+.attach { margin-top: 6px; }
+.attach .row { margin: 0; align-items: center; gap: 8px; }
+.att-list { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px; }
+.att { display: inline-flex; align-items: center; gap: 4px; max-width: 100%; padding: 3px 4px 3px 8px; font-size: 12px; background: var(--panel-2); border: 1px solid var(--line); }
+.att small { color: var(--muted); }
+.att.bad { border-color: #ff7a6b; color: #ffb4a8; }
+.att button { padding: 0 6px; min-height: 0; line-height: 18px; background: none; border: none; color: var(--muted); cursor: pointer; }
+.att button:hover { color: #fff; }
+.launcher.dropping, .notebox.dropping { outline: 2px dashed var(--accent); outline-offset: 4px; }

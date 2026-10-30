@@ -1,13 +1,13 @@
 {
   "name": "ai-office",
-  "version": "0.6.1",
+  "version": "0.6.2",
   "description": "避難所剖面風格的 AI 辦公室：多個 AI（Claude / Codex / Gemini / Grok）以角色身分協作任務",
   "main": "src/main/main.js",
   "scripts": {
     "start": "node src/server/server.js",
     "electron": "electron .",
     "dev": "electron . --dev",
-    "test": "node scripts/smoke-test.js && node scripts/board-test.js",
+    "test": "node scripts/smoke-test.js && node scripts/board-test.js && node scripts/attach-test.js",
     "check-cli": "node scripts/check-cli.js"
   },
   "license": "MIT",
@@ -19,6 +19,6 @@
       "repo": "MAO-96/ai-office",
       "branch": "main"
     },
-    "notes": "新員工：資料蒐集員 Iris（Gemini），研究管線改由她先上網蒐集資料；每位員工可以各自設定權限：唯讀、工作目錄、完整權限"
+    "notes": "可以夾帶檔案進任務與追加指示（拖曳、貼上截圖都行），Word／Excel／PowerPoint／文字檔內容會直接放進提示詞"
   }
 }

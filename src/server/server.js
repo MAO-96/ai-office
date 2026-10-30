@@ -131,7 +131,7 @@ function readBody(req) {
   return new Promise((resolve, reject) => {
     let s = '';
     req.setEncoding('utf8');
-    req.on('data', (c) => { s += c; if (s.length > 5e6) reject(new Error('內容過大')); });
+    req.on('data', (c) => { s += c; if (s.length > 3e7) { reject(new Error('內容過大（附件上限 20 MB）')); req.destroy(); } });
     req.on('end', () => { try { resolve(s ? JSON.parse(s) : null); } catch (e) { reject(e); } });
   });
 }

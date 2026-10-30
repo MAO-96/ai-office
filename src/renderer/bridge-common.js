@@ -19,7 +19,9 @@
       removeRun: (runId) => call('removeRun', { runId }),
       clearRuns: () => call('clearRuns'),
       answerAsk: (runId, answers) => call('answerAsk', { runId, source: runId === 'devops' ? 'devops' : 'run', answers }),
-      addNote: (runId, text) => call('addNote', { runId, text }),
+      addNote: (runId, text, attachments) => call('addNote', { runId, text, attachments }),
+      // 附件：{ name, data(base64) } → { id, name, kind, size, readable }
+      uploadAttachment: (name, data) => call('uploadAttachment', { name, data }),
       listRoutines: () => call('listRoutines'),
       saveRoutine: (r) => call('saveRoutine', r),
       deleteRoutine: (id) => call('deleteRoutine', { id }),
